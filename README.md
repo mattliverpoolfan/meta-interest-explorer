@@ -61,9 +61,9 @@ Apps Script 編輯器右上角「部署 > 新增部署作業 > 網頁應用程�
 
 ### 5. 部署前端
 
-`web/` 目錄下三個檔案（純靜態，沒有 build step）直接推到一個 GitHub repo，開啟 GitHub Pages 指向這個 repo 即可。或是先在本機直接用瀏覽器開 `web/index.html` 測試也可以。
+`docs/` 目錄下三個檔案（純靜態，沒有 build step）推到一個**公開**的 GitHub repo（GitHub Pages 免費方案只支援公開 repo；這份前端程式碼本身不含任何機密，token 是使用者自己在網頁上填的，公開沒有風險），開啟 GitHub Pages 指向 `main` 分支的 `/docs` 資料夾即可。或是先在本機直接用瀏覽器開 `docs/index.html` 測試也可以。
 
-打開頁面後，把第 4 步拿到的 Web App URL、跟你在 `setup()` 裡設的 `apiKey` 貼進頁面最上面兩個欄位，按「儲存設定」。
+打開頁面後，把第 4 步拿到的 Web App URL、跟你在 Script Properties 裡設的 `APP_API_KEY` 貼進頁面最上面兩個欄位，按「儲存設定」。
 
 ## 日常使用
 
