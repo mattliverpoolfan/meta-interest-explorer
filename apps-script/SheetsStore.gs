@@ -2,6 +2,10 @@
  * 所有分頁的讀寫都集中在這裡，其他檔案不要直接碰 SpreadsheetApp。
  * 這個工具的資料量（幾千~幾萬列）遠低於「需要真正索引」的門檻，
  * 策略就是整張分頁讀進記憶體、用物件當 key 比對，寫回去用 setValues 整批寫。
+ *
+ * 例外：SeedKeywords 不在這份「資料庫」試算表裡，而是獨立另一份 Sheet，
+ * 見本檔下方 getSeedKeywords_() 的說明——這樣以後才能安全把那份 Sheet
+ * 的編輯權限分享給同事，不會連帶洩漏這份試算表綁定的 Script Properties。
  */
 
 var SHEETS = {
@@ -114,8 +118,24 @@ function appendRow_(name, row) {
   sheet.appendRow(rowArray);
 }
 
+/**
+ * SeedKeywords 刻意不放在這個「資料庫」試算表裡，而是放在另一份獨立的
+ * Google Sheet（可安全分享編輯權限給同事，不會連帶讓對方看到 Script Properties
+ * 裡的 Meta token／帳戶 ID／apiKey）。這裡透過 SEED_KEYWORDS_SHEET_ID
+ * 這個 Script Property 指到那份外部試算表。
+ */
+function getSeedKeywordsSpreadsheet_() {
+  var id = PropertiesService.getScriptProperties().getProperty('SEED_KEYWORDS_SHEET_ID');
+  return id ? SpreadsheetApp.openById(id) : getSpreadsheet_();
+}
+
 function getSeedKeywords_() {
-  return readSheetAsObjects_(SHEETS.SEED_KEYWORDS)
-    .map(function (r) { return String(r.keyword || '').trim(); })
+  var ss = getSeedKeywordsSpreadsheet_();
+  var sheet = ss.getSheetByName(SHEETS.SEED_KEYWORDS);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  return values.map(function (r) { return String(r[0] || '').trim(); })
     .filter(function (k) { return k.length > 0; });
 }

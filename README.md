@@ -10,7 +10,13 @@
 
 開一個新的 Google Sheet，隨便命名（例如「Meta興趣資料庫」）。不用手動建分頁，程式第一次寫入時會自動建好 `Interests` / `Categories` / `Snapshots` / `RelatedCache` / `OverlapCache` 五個分頁。
 
-**唯一要手動做的**：建一個 `SeedKeywords` 分頁，A 欄從第 2 列開始，一列填一個關鍵字（第 1 列留給表頭 `keyword`）。這是刷新快照時拿去搜尋興趣用的種子關鍵字，涵蓋越多常見分類（3C、美妝、旅遊、健身、親子、遊戲、金融、時尚、寵物、美食…）效果越好，之後也能隨時直接在這個分頁裡加關鍵字。
+⚠️ **這份 Sheet 之後不要分享編輯權限給任何人**——它綁定的 Apps Script 專案裡存著 Meta token 等機密（見下方第 3 步），只要誰有這份 Sheet 的「編輯者」權限，就能打開「擴充功能 > Apps Script > 專案設定」看到明文，這是 Google 的權限模型本身如此，Sheet 內的「保護工作表/範圍」功能救不了這件事。之後要分享這個工具給同事，只分享**前端網頁的網址**（第 5 步），不要分享這份 Sheet 本身。
+
+### 1b. 建立另一份「種子關鍵字」Sheet（這份可以放心分享）
+
+再開**另一個獨立的**新 Google Sheet（例如「Meta興趣發想—種子關鍵字清單（可共編）」），建一個 `SeedKeywords` 分頁，A 欄從第 2 列開始，一列填一個關鍵字（第 1 列留給表頭 `keyword`）。這是刷新快照時拿去搜尋興趣用的種子關鍵字，涵蓋越多常見分類（3C、美妝、旅遊、健身、親子、遊戲、金融、時尚、寵物、美食…）效果越好。
+
+把這份 Sheet 的網址列裡那串 ID（`https://docs.google.com/spreadsheets/d/{這一段}/edit`）記下來，第 3 步要用到。之所以刻意拆成兩份 Sheet：這份完全不含任何機密，之後同事想幫忙補充關鍵字，直接把這份 Sheet 的編輯權限分享給他們即可，不會連帶洩漏 Meta token。
 
 ### 2. 部署 Apps Script
 
@@ -32,13 +38,18 @@ clasp push
 
 ### 3. 填入憑證
 
-回到 Apps Script 編輯器，選擇 `setup` 函式執行一次（第一次執行會要求授權，允許即可）。會依序跳出三個輸入框：
+⚠️ **不要用 `setup()` 函式**（程式碼裡還留著，但已知有問題）：它用 `ui.prompt()` 依序跳三個輸入框，而 Apps Script 單次執行的 6 分鐘上限包含「等你輸入」的時間——填三個框如果超過 6 分鐘，程式會在存值之前就被系統砍掉，三個值全部不會存進去（親身遇過）。
 
-1. Meta access token —— 沿用 `meta-ads-mcp-server` 裡 FAV 或 Freedom 帳戶的 token，**記得先幫這組 token 加開 `ads_management` 權限**（原本可能只有 `ads_read`，重疊估算的 `delivery_estimate` 需要 `ads_management`）
-2. 廣告帳戶 ID，格式 `act_xxxxxxxxx`
-3. 自己取一組隨機字串當 `apiKey`（用來保護「算重疊」「刷新快照」這兩個會花 API 額度的操作）
+改成直接在「專案設定 > 指令碼屬性」手動新增四筆，沒有時間壓力：
 
-這些值會存進 Apps Script 的 Script Properties，不會出現在程式碼或 git 裡。
+| 屬性名稱 | 值 |
+|---|---|
+| `META_ACCESS_TOKEN` | Meta access token（沿用 `meta-ads-mcp-server` 裡 FAV 或 Freedom 帳戶的 token，**記得先加開 `ads_management` 權限**，重疊估算的 `delivery_estimate` 需要它） |
+| `META_AD_ACCOUNT_ID` | 廣告帳戶 ID，`act_` 前綴加不加都可以，程式碼會自動處理 |
+| `APP_API_KEY` | 自己取一組隨機字串，用來保護「算重疊」「刷新快照」這兩個會花 API 額度的操作 |
+| `SEED_KEYWORDS_SHEET_ID` | 第 1b 步那份**另外一份**種子關鍵字 Sheet 的檔案 ID |
+
+這些值存在 Apps Script 的 Script Properties 裡，不會出現在程式碼或 git 裡——但要注意：**任何有這份「資料庫」Sheet 編輯權限的人，都看得到這個頁面的明文值**（見第 1 步的警語），所以這份 Sheet 的編輯權限要一直只留給你自己。
 
 ### 4. 部署成 Web App
 

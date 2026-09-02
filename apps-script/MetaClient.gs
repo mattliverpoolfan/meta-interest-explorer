@@ -1,11 +1,14 @@
 /**
  * Meta Graph API 呼叫封裝。
  * 憑證一律從 Script Properties 讀，不寫死在程式碼、不進 git。
- * 執行 setup() 一次即可（見本檔最下方），或手動在
- * 專案設定 > Script Properties 裡填入下列三個 key：
- *   META_ACCESS_TOKEN   —— FAV/Freedom 帳戶的 access token（需有 ads_management 權限）
- *   META_AD_ACCOUNT_ID  —— act_xxxxxxxxx 格式
- *   META_API_VERSION    —— 選填，預設 v21.0
+ *
+ * 手動在「專案設定 > 指令碼屬性」填入下列 key（不要用 ui.prompt() 寫設定精靈：
+ * Apps Script 單次執行的 6 分鐘上限含等待輸入的時間，序列跳好幾個輸入框很容易
+ * 中途被系統砍掉、東西全部沒存到）：
+ *   META_ACCESS_TOKEN     —— FAV/Freedom 帳戶的 access token（需有 ads_management 權限）
+ *   META_AD_ACCOUNT_ID    —— act_xxxxxxxxx 格式，有沒有 act_ 前綴都可以
+ *   META_API_VERSION      —— 選填，預設 v21.0
+ *   SEED_KEYWORDS_SHEET_ID —— 見 SheetsStore.gs 的 getSeedKeywords_() 說明
  */
 
 var META_BASE = 'https://graph.facebook.com';
@@ -22,21 +25,6 @@ function getMetaConfig_() {
     version: props.getProperty('META_API_VERSION') || 'v21.0',
     defaultCountry: props.getProperty('META_DEFAULT_COUNTRY') || 'TW',
   };
-}
-
-/** 設定精靈：在 Apps Script 編輯器裡選這個函式手動執行一次 */
-function setup() {
-  var props = PropertiesService.getScriptProperties();
-  var ui = SpreadsheetApp.getUi();
-  var token = ui.prompt('貼上 Meta access token（需有 ads_management 權限）').getResponseText().trim();
-  var accountId = ui.prompt('貼上廣告帳戶 ID（格式 act_xxxxxxxxx）').getResponseText().trim();
-  var apiKey = ui.prompt('設定一組給 refreshSnapshot / estimateOverlap 用的 apiKey（自己取一串隨機字串）').getResponseText().trim();
-  props.setProperties({
-    META_ACCESS_TOKEN: token,
-    META_AD_ACCOUNT_ID: accountId,
-    APP_API_KEY: apiKey,
-  });
-  ui.alert('設定完成，已存進 Script Properties。');
 }
 
 function metaGet_(path, params) {
