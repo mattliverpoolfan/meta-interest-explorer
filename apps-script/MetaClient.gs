@@ -50,20 +50,22 @@ function metaGet_(path, params) {
 
 /**
  * 用關鍵字搜尋興趣。
- * 優先使用廣告帳戶專屬的 /act_<id>/targetingsearch，確保結果與廣告管理員後台 100% 一致（自動過濾 Meta 已下架或不可投放的標籤）；
- * 若帳號端點不可用則退回全域 /search。
+ * isLiveQuery: true 時使用廣告帳戶專屬 targetingsearch（過濾後台不可投放標籤，單筆搜尋用）；
+ * false 或未指定時使用 /search（批次掃描用，避免短時間大量請求撞到廣告帳戶的 80004 限速）。
  */
-function searchAdInterest_(query, limit) {
+function searchAdInterest_(query, limit, isLiveQuery) {
   var config = getMetaConfig_();
-  var accountPath = '/act_' + config.accountId.replace(/^act_/, '');
-  try {
-    var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
-    return json.data || [];
-  } catch (e) {
-    Logger.log('targetingsearch 失敗，退回全域 /search：' + e.message);
-    var fallback = metaGet_('/search', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
-    return fallback.data || [];
+  if (isLiveQuery) {
+    var accountPath = '/act_' + config.accountId.replace(/^act_/, '');
+    try {
+      var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 50 });
+      return json.data || [];
+    } catch (e) {
+      Logger.log('targetingsearch 失敗，退回 /search：' + e.message);
+    }
   }
+  var fallback = metaGet_('/search', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
+  return fallback.data || [];
 }
 
 /** 給定興趣名稱清單，找 Meta 認為相關的其他興趣（type=adinterestsuggestion） */

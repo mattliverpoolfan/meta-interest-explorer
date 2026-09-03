@@ -57,8 +57,8 @@ function handleSearchInterests_(q) {
     return String(row.name).toLowerCase().indexOf(query) !== -1;
   });
   if (cached.length) return cached;
-  // 快取沒有才即時查 Meta；刻意不寫回 Interests 分頁，避免污染快照的 last_snapshot_id 語意
-  return searchAdInterest_(q, 50);
+  // 快取沒有才即時查 Meta；傳入 isLiveQuery=true 使用 targetingsearch 自動過濾無效標籤
+  return searchAdInterest_(q, 50, true);
 }
 
 /**
@@ -216,7 +216,7 @@ function runRefreshBatch() {
   var found = [];
   batch.forEach(function (keyword) {
     try {
-      searchAdInterest_(keyword).forEach(function (r) { found.push(r); });
+      searchAdInterest_(keyword, 200, false).forEach(function (r) { found.push(r); });
     } catch (e) {
       Logger.log('關鍵字「' + keyword + '」查詢失敗：' + e.message);
     }
