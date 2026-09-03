@@ -8,7 +8,6 @@
  *   META_ACCESS_TOKEN     —— FAV/Freedom 帳戶的 access token（需有 ads_management 權限）
  *   META_AD_ACCOUNT_ID    —— act_xxxxxxxxx 格式，有沒有 act_ 前綴都可以
  *   META_API_VERSION      —— 選填，預設 v21.0
- *   SEED_KEYWORDS_SHEET_ID —— 見 SheetsStore.gs 的 getSeedKeywords_() 說明
  */
 
 var META_BASE = 'https://graph.facebook.com';

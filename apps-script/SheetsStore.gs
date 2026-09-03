@@ -3,9 +3,8 @@
  * 這個工具的資料量（幾千~幾萬列）遠低於「需要真正索引」的門檻，
  * 策略就是整張分頁讀進記憶體、用物件當 key 比對，寫回去用 setValues 整批寫。
  *
- * 例外：SeedKeywords 不在這份「資料庫」試算表裡，而是獨立另一份 Sheet，
- * 見本檔下方 getSeedKeywords_() 的說明——這樣以後才能安全把那份 Sheet
- * 的編輯權限分享給同事，不會連帶洩漏這份試算表綁定的 Script Properties。
+ * SeedKeywords 直接存於這份「資料庫」試算表內（SeedKeywords 分頁）。
+ * 若分頁不存在或為空，系統會自動建立並寫入 166 個預設種子關鍵字。
  */
 
 var SHEETS = {
@@ -25,6 +24,28 @@ var SHEET_HEADERS = {
   OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'computed_at'],
   SeedKeywords: ['keyword'],
 };
+
+var DEFAULT_SEED_KEYWORDS = [
+  '手機', '筆記型電腦', '平板電腦', '智慧型手錶', '藍芽耳機', '遊戲主機', '相機', '空拍機',
+  '智慧家庭', '電競', 'iPhone', 'Samsung', 'PlayStation', 'Nintendo Switch', 'Xbox',
+  '保養品', '彩妝', '香水', '護膚', '美白', '抗老', '面膜', '精華液', '美甲', '美睫',
+  '醫美', '微整形', '美妝', '時尚', '穿搭', '精品', '名牌包', '手錶', '珠寶', '球鞋',
+  '潮流服飾', 'Zara', 'Uniqlo', 'Nike', 'Adidas', '快時尚', '旅遊', '自助旅行', '露營',
+  '背包客', '訂房', '機票', '郵輪', '潛水', '衝浪', '露營車', '國內旅遊', '日本旅遊',
+  '歐洲旅遊', 'Airbnb', '飯店', '健身', '重訓', '瑜珈', '跑步', '馬拉松', '自行車',
+  '游泳', '登山', '攀岩', '拳擊', '皮拉提斯', '高爾夫球', '網球', '籃球', '足球',
+  '棒球', '運動營養品', '健身房', '親子', '育兒', '懷孕', '母嬰用品', '尿布', '奶粉',
+  '兒童玩具', '幼兒園', '兒童教育', '親子旅遊', '寶寶副食品', '手機遊戲', '電玩', 'Steam',
+  '任天堂', '桌遊', '卡牌遊戲', '英雄聯盟', '原神', '投資', '理財', '股票', '基金',
+  '保險', '信用卡', '加密貨幣', '比特幣', '房地產投資', '退休規劃', '記帳', '寵物',
+  '狗', '貓', '寵物用品', '寵物食品', '寵物美容', '水族', '美食', '咖啡', '甜點',
+  '烘焙', '素食', '餐廳', '小吃', '精釀啤酒', '紅酒', '調酒', '料理', '食譜',
+  '居家裝潢', '家具', '家電', '收納', '園藝', 'DIY', '室內設計', '廚房用品', '電影',
+  '韓劇', '動漫', '音樂', 'Podcast', 'YouTube', 'Netflix', '演唱會', 'K-pop', '攝影',
+  '單眼相機', '底片攝影', '繪畫', '藝術', '手作', '陶藝', '書法', '汽車', '機車',
+  '電動車', '改裝車', 'Tesla', '線上課程', '語言學習', '英文學習', '程式設計', '讀書會',
+  '職涯發展', '證照考試', '健康飲食', '減重', '睡眠', '心理健康', '中醫', '營養補充品'
+];
 
 function getSpreadsheet_() {
   return SpreadsheetApp.getActiveSpreadsheet();
@@ -119,23 +140,34 @@ function appendRow_(name, row) {
 }
 
 /**
- * SeedKeywords 刻意不放在這個「資料庫」試算表裡，而是放在另一份獨立的
- * Google Sheet（可安全分享編輯權限給同事，不會連帶讓對方看到 Script Properties
- * 裡的 Meta token／帳戶 ID／apiKey）。這裡透過 SEED_KEYWORDS_SHEET_ID
- * 這個 Script Property 指到那份外部試算表。
+ * 讀取種子關鍵字清單。
+ * 直接從目前「資料庫」試算表的 SeedKeywords 分頁讀取。
+ * 若分頁不存在或為空，會自動建立分頁並寫入 166 個預設關鍵字。
  */
-function getSeedKeywordsSpreadsheet_() {
-  var id = PropertiesService.getScriptProperties().getProperty('SEED_KEYWORDS_SHEET_ID');
-  return id ? SpreadsheetApp.openById(id) : getSpreadsheet_();
-}
-
 function getSeedKeywords_() {
-  var ss = getSeedKeywordsSpreadsheet_();
+  var ss = getSpreadsheet_();
   var sheet = ss.getSheetByName(SHEETS.SEED_KEYWORDS);
-  if (!sheet) return [];
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEETS.SEED_KEYWORDS);
+    sheet.getRange(1, 1).setValue('keyword');
+    sheet.setFrozenRows(1);
+    var initRows = DEFAULT_SEED_KEYWORDS.map(function (k) { return [k]; });
+    sheet.getRange(2, 1, initRows.length, 1).setValues(initRows);
+    return DEFAULT_SEED_KEYWORDS;
+  }
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
+  if (lastRow < 2) {
+    var fillRows = DEFAULT_SEED_KEYWORDS.map(function (k) { return [k]; });
+    sheet.getRange(2, 1, fillRows.length, 1).setValues(fillRows);
+    return DEFAULT_SEED_KEYWORDS;
+  }
   var values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  return values.map(function (r) { return String(r[0] || '').trim(); })
+  var keywords = values.map(function (r) { return String(r[0] || '').trim(); })
     .filter(function (k) { return k.length > 0; });
+  if (!keywords.length) {
+    var fallbackRows = DEFAULT_SEED_KEYWORDS.map(function (k) { return [k]; });
+    sheet.getRange(2, 1, fallbackRows.length, 1).setValues(fallbackRows);
+    return DEFAULT_SEED_KEYWORDS;
+  }
+  return keywords;
 }

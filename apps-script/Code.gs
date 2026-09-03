@@ -108,6 +108,42 @@ function getRefreshStatus_() {
 
 var REFRESH_BATCH_SIZE = 40;
 
+/**
+ * 供在 Apps Script 編輯器中手動點選「▶ 執行」的進入點。
+ * 沒有底線結尾才會出現在頂部函式下拉選單中。
+ */
+function startRefresh() {
+  startOrContinueRefresh_();
+}
+
+/**
+ * 快速測試權限、Script Properties 與種子關鍵字讀取，
+ * 第一次執行時會跳出 Google 授權視窗，按「允許」即可。
+ */
+function testPermissionsAndKeywords() {
+  Logger.log('=== 檢查 Script Properties ===');
+  var props = PropertiesService.getScriptProperties();
+  var token = props.getProperty('META_ACCESS_TOKEN');
+  var accountId = props.getProperty('META_AD_ACCOUNT_ID');
+  var apiKey = props.getProperty('APP_API_KEY');
+  Logger.log('META_ACCESS_TOKEN: ' + (token ? '已設定 (前5碼 ' + token.slice(0, 5) + '...)' : '未設定'));
+  Logger.log('META_AD_ACCOUNT_ID: ' + accountId);
+  Logger.log('APP_API_KEY: ' + (apiKey ? '已設定' : '未設定'));
+  if (props.getProperty('SEED_KEYWORDS_SHEET_ID')) {
+    props.deleteProperty('SEED_KEYWORDS_SHEET_ID');
+    Logger.log('已自動清除舊的 SEED_KEYWORDS_SHEET_ID 屬性（已整合回本試算表）');
+  }
+
+  Logger.log('=== 檢查種子關鍵字（本資料庫 SeedKeywords 分頁）===');
+  var keywords = getSeedKeywords_();
+  Logger.log('成功讀取關鍵字數量: ' + keywords.length);
+  if (keywords.length > 0) {
+    Logger.log('前 5 個關鍵字範例: ' + keywords.slice(0, 5).join(', '));
+  } else {
+    Logger.log('警告: 未能讀取到關鍵字');
+  }
+}
+
 function startOrContinueRefresh_() {
   var props = PropertiesService.getScriptProperties();
   var stateStr = props.getProperty('REFRESH_STATE');
