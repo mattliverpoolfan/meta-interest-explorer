@@ -229,12 +229,44 @@ function runRefreshBatch() {
   var isDone = state.cursor >= state.keywords.length;
 
   if (isDone) {
+    // 方案 B：自動關聯拓圈（Recursive Expansion）
+    expandRelatedSuggestions_(state);
     finalizeRefresh_(state);
     props.deleteProperty('REFRESH_STATE');
     deleteRefreshTriggers_();
   } else {
     props.setProperty('REFRESH_STATE', JSON.stringify(state));
     scheduleNextBatch_();
+  }
+}
+
+/** 方案 B：自動抽取當前熱門標籤，向 Meta 要求官方關聯建議，自動拓圈 500~1500 筆長尾受眾 */
+function expandRelatedSuggestions_(state) {
+  try {
+    var all = readSheetAsObjects_(SHEETS.INTERESTS);
+    var sampleNames = [];
+    for (var i = 0; i < all.length && sampleNames.length < 30; i++) {
+      if (all[i].name && sampleNames.indexOf(all[i].name) === -1) {
+        sampleNames.push(all[i].name);
+      }
+    }
+    if (sampleNames.length) {
+      Logger.log('正在執行方案 B 自動關聯拓圈，選取代表詞：' + sampleNames.slice(0, 5).join(', '));
+      for (var j = 0; j < sampleNames.length; j += 5) {
+        var chunk = sampleNames.slice(j, j + 5);
+        try {
+          var res = searchAdInterestSuggestion_(chunk);
+          if (res && res.length) {
+            upsertFoundInterests_(res, state.snapshotId);
+          }
+        } catch (e) {
+          Logger.log('關聯推薦跳過：' + e.message);
+        }
+        Utilities.sleep(200);
+      }
+    }
+  } catch (e) {
+    Logger.log('關聯拓圈異常：' + e.message);
   }
 }
 
@@ -301,11 +333,15 @@ function finalizeRefresh_(state) {
   var newIds = [];
   var removedIds = [];
   var foundThisRunCount = 0;
+  var isBaseline = !state.prevSnapshotId;
 
   allInterests.forEach(function (row) {
     if (row.last_snapshot_id === state.snapshotId) {
       foundThisRunCount++;
-      if (new Date(row.first_seen_at) >= new Date(state.startedAt)) newIds.push(row.id);
+      // 只有在非初次基準建立時，才記錄 new_interest_ids；初次建庫為 baseline
+      if (!isBaseline && new Date(row.first_seen_at) >= new Date(state.startedAt)) {
+        newIds.push(row.id);
+      }
     } else if (state.prevSnapshotId && row.last_snapshot_id === state.prevSnapshotId) {
       // 上一份快照有出現，這次完全沒被更新到 → 消失了
       removedIds.push(row.id);
@@ -320,6 +356,6 @@ function finalizeRefresh_(state) {
     interests_found_count: foundThisRunCount,
     new_interest_ids: JSON.stringify(newIds),
     removed_interest_ids: JSON.stringify(removedIds),
-    status: 'done',
+    status: isBaseline ? 'baseline_done' : 'done',
   });
 }
