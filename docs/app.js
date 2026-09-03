@@ -36,24 +36,52 @@ function requireUrl() {
   }
 }
 
+/**
+ * Apps Script 的 /exec 端點會間歇性回傳 Google 自己的 404 錯誤頁（HTML，不是我們的 JSON）——
+ * 後端執行紀錄顯示程式其實有正常跑完，是 Google 的傳遞層在出包，而且過幾分鐘會自己好。
+ * 這種上游不穩定我們沒辦法從程式碼修掉，只能重試把它蓋過去。
+ */
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 900;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchJsonWithRetry(url, options) {
+  let lastProblem = null;
+  for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        // 拿到 HTML 而不是 JSON＝Google 傳遞層出包，值得重試
+        lastProblem = `Google 回應異常（HTTP ${res.status}）`;
+      }
+    } catch (networkErr) {
+      lastProblem = networkErr.message;
+    }
+    if (attempt < RETRY_ATTEMPTS) await sleep(RETRY_DELAY_MS * attempt);
+  }
+  throw new Error(`${lastProblem}，重試 ${RETRY_ATTEMPTS} 次都失敗。這是 Google Apps Script 端的間歇性問題，通常過幾分鐘會自己恢復，請稍後再試。`);
+}
+
 async function apiGet(action, params) {
   requireUrl();
   const qs = new URLSearchParams({ action, ...params }).toString();
-  const res = await fetch(`${state.webappUrl}?${qs}`);
-  const json = await res.json();
+  const json = await fetchJsonWithRetry(`${state.webappUrl}?${qs}`);
   if (json.error) throw new Error(json.error);
   return json;
 }
 
 async function apiPost(body) {
   requireUrl();
-  const res = await fetch(state.webappUrl, {
+  const json = await fetchJsonWithRetry(state.webappUrl, {
     method: 'POST',
     // 用 text/plain 避免瀏覽器對 Apps Script Web App 發出 CORS preflight（Apps Script 對 OPTIONS 的支援不完整）
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ ...body, apiKey: state.apiKey }),
   });
-  const json = await res.json();
   if (json.error) throw new Error(json.error);
   return json;
 }
