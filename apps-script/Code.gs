@@ -12,7 +12,7 @@ function doGet(e) {
     var action = e.parameter.action;
     if (action === 'searchInterests') return jsonOutput_(handleSearchInterests_(e.parameter.q));
     if (action === 'categoryTree') return jsonOutput_(readSheetAsObjects_(SHEETS.CATEGORIES));
-    if (action === 'suggestRelated') return jsonOutput_(handleSuggestRelated_(e.parameter.seed_ids));
+    if (action === 'suggestRelated') return jsonOutput_(handleSuggestRelated_(e.parameter.seed_ids, e.parameter.seed_names));
     if (action === 'refreshStatus') return jsonOutput_(getRefreshStatus_());
     return jsonOutput_({ error: '未知的 action：' + action });
   } catch (err) {
@@ -44,7 +44,7 @@ function jsonOutput_(obj) {
 
 function requireApiKey_(key) {
   var expected = PropertiesService.getScriptProperties().getProperty('APP_API_KEY');
-  if (!expected) throw new Error('尚未設定 APP_API_KEY，請先在編輯器裡執行 setup()');
+  if (!expected) throw new Error('尚未設定 APP_API_KEY，請到「專案設定 > 指令碼屬性」新增');
   if (key !== expected) throw new Error('apiKey 不正確');
 }
 
@@ -61,18 +61,27 @@ function handleSearchInterests_(q) {
   return searchAdInterest_(q, 50);
 }
 
-function handleSuggestRelated_(seedIdsParam) {
-  var seedIds = String(seedIdsParam || '').split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s; });
-  if (!seedIds.length) return [];
+/**
+ * Meta 的 adinterestsuggestion 吃的是興趣「名稱」不是 ID。前端手上本來就有名稱
+ * （搜尋結果裡就帶著），所以優先直接用 seed_names；沒帶名稱時才退回拿 ID 去
+ * Interests 分頁反查——注意還沒跑過刷新快照時那張分頁是空的，只靠反查會失敗。
+ */
+function handleSuggestRelated_(seedIdsParam, seedNamesParam) {
+  var names = String(seedNamesParam || '').split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s; });
 
-  var interestsIndex = indexSheetByKey_(SHEETS.INTERESTS, 'id').index;
-  var names = seedIds.map(function (id) {
-    var row = interestsIndex[id];
-    return row ? row.data.name : null;
-  }).filter(function (n) { return n; });
-  if (!names.length) throw new Error('選定的興趣在 Interests 分頁裡找不到名稱，請先搜尋或刷新過一次快照');
+  if (!names.length) {
+    var seedIds = String(seedIdsParam || '').split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s; });
+    if (!seedIds.length) return [];
+    var interestsIndex = indexSheetByKey_(SHEETS.INTERESTS, 'id').index;
+    names = seedIds.map(function (id) {
+      var row = interestsIndex[id];
+      return row ? row.data.name : null;
+    }).filter(function (n) { return n; });
+  }
+  if (!names.length) throw new Error('找不到興趣名稱，無法查詢相關興趣');
 
-  var cacheKey = seedIds.slice().sort().join(',');
+  // 用名稱當快取 key，因為名稱才是真正丟給 Meta 的東西
+  var cacheKey = names.slice().sort().join(',');
   var cacheCtx = indexSheetByKey_(SHEETS.RELATED_CACHE, 'seed_interest_id');
   var cached = cacheCtx.index[cacheKey];
   if (cached) return JSON.parse(cached.data.related_json);

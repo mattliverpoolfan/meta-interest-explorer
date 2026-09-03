@@ -135,16 +135,17 @@ function renderWorklist() {
         <button data-action="remove">移除</button>
       </div>
     `;
-    div.querySelector('[data-action="related"]').addEventListener('click', () => findRelated(item.id));
+    div.querySelector('[data-action="related"]').addEventListener('click', () => findRelated(item));
     div.querySelector('[data-action="remove"]').addEventListener('click', () => removeFromWorklist(item.id));
     container.appendChild(div);
   });
   el('compute-overlap-btn').disabled = state.worklist.length < 2;
 }
 
-async function findRelated(seedId) {
+async function findRelated(item) {
   try {
-    const suggestions = await apiGet('suggestRelated', { seed_ids: seedId });
+    // 一併帶上名稱：Meta 的 suggestion API 吃名稱，後端才不用回頭去 Sheet 反查
+    const suggestions = await apiGet('suggestRelated', { seed_ids: item.id, seed_names: item.name });
     const list = el('suggestion-list');
     list.innerHTML = '';
     suggestions.forEach((item) => {
