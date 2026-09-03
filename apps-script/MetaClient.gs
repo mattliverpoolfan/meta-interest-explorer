@@ -87,8 +87,9 @@ function deliveryEstimate_(flexibleSpec) {
     targeting_spec: JSON.stringify(targetingSpec),
   });
   var row = (json.data && json.data[0]) || {};
-  // Meta 回傳的是一個範圍，這裡取上下界平均當代表值
-  var lower = Number(row.estimate_dau || row.users_lower_bound || 0);
-  var upper = Number(row.estimate_mau || row.users_upper_bound || lower);
+  // Meta 回傳的是 estimate_mau_lower_bound / estimate_mau_upper_bound 這組範圍，取平均當代表值
+  // （estimate_dau 這個欄位雖然存在，但 REACH 這個 optimization_goal 底下它恆常是 0，不能拿來用）
+  var lower = Number(row.estimate_mau_lower_bound || 0);
+  var upper = Number(row.estimate_mau_upper_bound || lower);
   return (lower + upper) / 2 || lower || upper || 0;
 }
