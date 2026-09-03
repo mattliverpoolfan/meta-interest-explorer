@@ -48,10 +48,22 @@ function metaGet_(path, params) {
   return json;
 }
 
-/** 用關鍵字搜尋興趣（type=adinterest） */
+/**
+ * 用關鍵字搜尋興趣。
+ * 優先使用廣告帳戶專屬的 /act_<id>/targetingsearch，確保結果與廣告管理員後台 100% 一致（自動過濾 Meta 已下架或不可投放的標籤）；
+ * 若帳號端點不可用則退回全域 /search。
+ */
 function searchAdInterest_(query, limit) {
-  var json = metaGet_('/search', { type: 'adinterest', q: query, limit: limit || 200 });
-  return json.data || [];
+  var config = getMetaConfig_();
+  var accountPath = '/act_' + config.accountId.replace(/^act_/, '');
+  try {
+    var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, limit: limit || 200 });
+    return json.data || [];
+  } catch (e) {
+    Logger.log('targetingsearch 失敗，退回全域 /search：' + e.message);
+    var fallback = metaGet_('/search', { type: 'adinterest', q: query, limit: limit || 200 });
+    return fallback.data || [];
+  }
 }
 
 /** 給定興趣名稱清單，找 Meta 認為相關的其他興趣（type=adinterestsuggestion） */
@@ -81,14 +93,19 @@ function deliveryEstimate_(flexibleSpec) {
     geo_locations: { countries: [config.defaultCountry] },
     flexible_spec: flexibleSpec,
   };
-  var json = metaGet_('/act_' + config.accountId.replace(/^act_/, '') + '/delivery_estimate', {
-    optimization_goal: 'REACH',
-    targeting_spec: JSON.stringify(targetingSpec),
-  });
-  var row = (json.data && json.data[0]) || {};
-  // Meta 回傳的是 estimate_mau_lower_bound / estimate_mau_upper_bound 這組範圍，取平均當代表值
-  // （estimate_dau 這個欄位雖然存在，但 REACH 這個 optimization_goal 底下它恆常是 0，不能拿來用）
-  var lower = Number(row.estimate_mau_lower_bound || 0);
-  var upper = Number(row.estimate_mau_upper_bound || lower);
-  return (lower + upper) / 2 || lower || upper || 0;
+  try {
+    var json = metaGet_('/act_' + config.accountId.replace(/^act_/, '') + '/delivery_estimate', {
+      optimization_goal: 'REACH',
+      targeting_spec: JSON.stringify(targetingSpec),
+    });
+    var row = (json.data && json.data[0]) || {};
+    // Meta 回傳的是 estimate_mau_lower_bound / estimate_mau_upper_bound 這組範圍，取平均當代表值
+    // （estimate_dau 這個欄位雖然存在，但 REACH 這個 optimization_goal 底下它恆常是 0，不能拿來用）
+    var lower = Number(row.estimate_mau_lower_bound || 0);
+    var upper = Number(row.estimate_mau_upper_bound || lower);
+    return (lower + upper) / 2 || lower || upper || 0;
+  } catch (e) {
+    Logger.log('delivery_estimate 估算失敗（可能含 Meta 已下架或不可投放的標籤）：' + e.message);
+    return 0;
+  }
 }

@@ -106,7 +106,7 @@ function getRefreshStatus_() {
 // Apps Script 單次執行上限 6 分鐘，關鍵字一多跑不完，所以拆成多個批次，
 // 每批跑完自己排一個 1 分鐘後的觸發器接著跑下一批，直到全部關鍵字處理完。
 
-var REFRESH_BATCH_SIZE = 40;
+var REFRESH_BATCH_SIZE = 200;
 
 /**
  * 供在 Apps Script 編輯器中手動點選「▶ 執行」的進入點。
@@ -117,8 +117,37 @@ function startRefresh() {
 }
 
 /**
- * 快速測試權限、Script Properties 與種子關鍵字讀取，
- * 第一次執行時會跳出 Google 授權視窗，按「允許」即可。
+ * 自動為本專案設定定期更新排程觸發器（每週一凌晨 02:00 自動執行 startRefresh）。
+ * 會自動清理多餘或手動殘留的舊觸發器，確保專案乾淨且不重複建立。
+ */
+function setupAutoSchedule() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var weeklyTriggerExists = false;
+
+  triggers.forEach(function (t) {
+    var fn = t.getHandlerFunction();
+    if (fn === 'runRefreshBatch') {
+      ScriptApp.deleteTrigger(t);
+      Logger.log('已自動清理舊的 runRefreshBatch 觸發器');
+    } else if (fn === 'startRefresh') {
+      weeklyTriggerExists = true;
+    }
+  });
+
+  if (!weeklyTriggerExists) {
+    ScriptApp.newTrigger('startRefresh')
+      .timeBased()
+      .onWeekDay(ScriptApp.WeekDay.MONDAY)
+      .atHour(2)
+      .create();
+    Logger.log('✅ 已成功自動建立每週一凌晨 02:00 定期更新快照的排程觸發器！');
+  } else {
+    Logger.log('ℹ️ 定期更新排程觸發器（startRefresh）已存在，無需重複建立。');
+  }
+}
+
+/**
+ * 快速測試權限、Script Properties、種子關鍵字讀取，並自動設定定期排程觸發器。
  */
 function testPermissionsAndKeywords() {
   Logger.log('=== 檢查 Script Properties ===');
@@ -142,6 +171,9 @@ function testPermissionsAndKeywords() {
   } else {
     Logger.log('警告: 未能讀取到關鍵字');
   }
+
+  Logger.log('=== 自動設定定期排程觸發器 ===');
+  setupAutoSchedule();
 }
 
 function startOrContinueRefresh_() {
