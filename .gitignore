@@ -1,3 +1,6 @@
 .DS_Store
 node_modules/
 apps-script/.clasp.json
+
+# 內部交接筆記——repo 是 public 的，帳戶 ID/部署細節這類維運資訊不該進公開歷史紀錄
+HANDOFF.md
