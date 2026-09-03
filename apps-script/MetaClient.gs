@@ -57,11 +57,11 @@ function searchAdInterest_(query, limit) {
   var config = getMetaConfig_();
   var accountPath = '/act_' + config.accountId.replace(/^act_/, '');
   try {
-    var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, limit: limit || 200 });
+    var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
     return json.data || [];
   } catch (e) {
     Logger.log('targetingsearch 失敗，退回全域 /search：' + e.message);
-    var fallback = metaGet_('/search', { type: 'adinterest', q: query, limit: limit || 200 });
+    var fallback = metaGet_('/search', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
     return fallback.data || [];
   }
 }
