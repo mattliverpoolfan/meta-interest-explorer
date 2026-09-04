@@ -1,42 +1,68 @@
+<meta charset="utf-8">
 <title>Meta 興趣受眾探索工具</title>
 <link rel="stylesheet" href="style.css">
 
 <div class="topbar">
   <h1>Meta 興趣受眾探索工具</h1>
-  <input id="webapp-url" placeholder="貼上 Apps Script Web App URL">
-  <input id="api-key" placeholder="apiKey（算重疊 / 刷新快照才需要）">
-  <button id="save-config">儲存設定</button>
 </div>
 
-<div class="layout">
-  <section class="panel">
-    <h2>分類瀏覽</h2>
-    <ul id="category-list"></ul>
-  </section>
-
-  <section class="panel">
-    <h2>搜尋興趣</h2>
-    <div class="searchbox">
-      <input id="search-input" placeholder="輸入關鍵字，例如「跑步」">
-      <button id="search-btn" class="primary">搜尋</button>
-    </div>
-    <ul id="search-results"></ul>
-    <div id="search-status" class="status"></div>
-
-    <h2 style="margin-top:20px">相關建議</h2>
-    <ul id="suggestion-list"></ul>
-  </section>
-
-  <section class="panel">
-    <h2>工作清單</h2>
-    <div id="worklist"></div>
-    <div style="display:flex; gap:8px; margin-top:10px;">
-      <button id="compute-overlap-btn">算重疊</button>
-      <button id="copy-for-ai-btn" class="primary">複製給 AI</button>
-    </div>
-    <table id="overlap-matrix" style="display:none"></table>
-    <div id="worklist-status" class="status"></div>
-  </section>
+<div class="tabbar">
+  <button class="tab-btn active" data-tab="explore">興趣探索與檢索</button>
+  <button class="tab-btn" data-tab="manual">自行比對重疊率</button>
 </div>
 
-<script src="app.js"></script>
+<div class="tabpanel" data-tabpanel="explore">
+  <div class="layout">
+    <section class="panel">
+      <h2>分類瀏覽</h2>
+      <ul id="category-list"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>搜尋興趣</h2>
+      <div class="searchbox">
+        <input id="search-input" placeholder="輸入關鍵字，例如「跑步」">
+        <button id="search-btn" class="primary">搜尋</button>
+      </div>
+      <ul id="search-results"></ul>
+      <div id="search-status" class="status"></div>
+
+      <h2 style="margin-top:20px">相關建議</h2>
+      <ul id="suggestion-list"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>工作清單</h2>
+      <div id="worklist"></div>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button id="compute-overlap-btn">算重疊</button>
+        <button id="copy-for-ai-btn" class="primary">複製給 AI</button>
+      </div>
+      <table id="overlap-matrix" style="display:none"></table>
+      <div id="worklist-status" class="status"></div>
+    </section>
+  </div>
+</div>
+
+<div class="tabpanel" data-tabpanel="manual" hidden>
+  <div class="layout layout-single">
+    <section class="panel">
+      <h2>自行比對重疊率</h2>
+      <p class="status">跟左邊的探索/檢索是兩種獨立情境：這裡不用搜尋、不用工作清單，直接輸入 2～5 個你已經知道的興趣標籤名稱（要跟 Meta 後台的名稱完全一致），系統幫你算彼此的受眾重疊比例。</p>
+      <div id="manual-compare-inputs" class="manual-compare-inputs">
+        <input class="manual-compare-input" placeholder="興趣標籤 1">
+        <input class="manual-compare-input" placeholder="興趣標籤 2">
+        <input class="manual-compare-input" placeholder="興趣標籤 3（選填）">
+        <input class="manual-compare-input" placeholder="興趣標籤 4（選填）">
+        <input class="manual-compare-input" placeholder="興趣標籤 5（選填）">
+      </div>
+      <div style="margin-top:10px;">
+        <button id="manual-compare-btn" class="primary">比對重疊率</button>
+      </div>
+      <table id="manual-overlap-matrix" style="display:none; margin-top:10px;"></table>
+      <div id="manual-compare-status" class="status"></div>
+    </section>
+  </div>
+</div>
+
+<script src="app.js" charset="utf-8"></script>

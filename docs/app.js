@@ -1,7 +1,10 @@
 // 極簡 vanilla JS，沒有框架、沒有 build step，直接開 index.html 或丟 GitHub Pages 就能跑。
 
+// Web App 網址是固定的，寫死在這裡就好，不需要使用者自己貼；
+// apiKey 則從分享連結的 ?key= 參數自動帶入（見 init() 底部），不做成畫面上的輸入框。
+const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxsLaM_z7wYqkJPfAVa0A6fWhbH7fyoQHMHTmmOK3Ra-ts7xJZnpyjTtVOCvV9737J4/exec';
+
 const state = {
-  webappUrl: localStorage.getItem('webappUrl') || '',
   apiKey: localStorage.getItem('apiKey') || '',
   worklist: [], // [{id, name, path}]
 };
@@ -9,31 +12,41 @@ const state = {
 const el = (id) => document.getElementById(id);
 
 function init() {
-  el('webapp-url').value = state.webappUrl;
-  el('api-key').value = state.apiKey;
-
-  el('save-config').addEventListener('click', () => {
-    state.webappUrl = el('webapp-url').value.trim().replace(/\/$/, '');
-    state.apiKey = el('api-key').value.trim();
-    localStorage.setItem('webappUrl', state.webappUrl);
-    localStorage.setItem('apiKey', state.apiKey);
-    loadCategories();
-  });
+  // 分享連結帶 ?key=xxx 時，把 apiKey 存起來並把它從網址上拿掉（避免留在瀏覽器紀錄/分享截圖裡）
+  const params = new URLSearchParams(location.search);
+  const keyFromUrl = params.get('key');
+  if (keyFromUrl) {
+    state.apiKey = keyFromUrl;
+    localStorage.setItem('apiKey', keyFromUrl);
+    params.delete('key');
+    const rest = params.toString();
+    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
+  }
 
   el('search-btn').addEventListener('click', runSearch);
   el('search-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
   el('compute-overlap-btn').addEventListener('click', computeOverlap);
   el('copy-for-ai-btn').addEventListener('click', copyForAI);
+  el('manual-compare-btn').addEventListener('click', computeManualOverlap);
+  initTabs();
 
-  if (state.webappUrl) loadCategories();
+  loadCategories();
   renderWorklist();
 }
 
-function requireUrl() {
-  if (!state.webappUrl) {
-    alert('請先貼上並儲存 Apps Script Web App 的 URL');
-    throw new Error('missing webapp url');
-  }
+// 探索/檢索跟自行比對是兩個獨立情境，不是同一套流程的前後步驟——用分頁切換，
+// 同時只顯示一個，避免版面看起來像「往下做完一步接著做下一步」。
+function initTabs() {
+  const buttons = document.querySelectorAll('.tab-btn');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buttons.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tabpanel').forEach((panel) => {
+        panel.hidden = panel.dataset.tabpanel !== btn.dataset.tab;
+      });
+    });
+  });
 }
 
 /**
@@ -67,16 +80,14 @@ async function fetchJsonWithRetry(url, options) {
 }
 
 async function apiGet(action, params) {
-  requireUrl();
   const qs = new URLSearchParams({ action, ...params }).toString();
-  const json = await fetchJsonWithRetry(`${state.webappUrl}?${qs}`);
+  const json = await fetchJsonWithRetry(`${WEBAPP_URL}?${qs}`);
   if (json.error) throw new Error(json.error);
   return json;
 }
 
 async function apiPost(body) {
-  requireUrl();
-  const json = await fetchJsonWithRetry(state.webappUrl, {
+  const json = await fetchJsonWithRetry(WEBAPP_URL, {
     method: 'POST',
     // 用 text/plain 避免瀏覽器對 Apps Script Web App 發出 CORS preflight（Apps Script 對 OPTIONS 的支援不完整）
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -199,7 +210,7 @@ async function computeOverlap() {
       }
     }
     const { results } = await apiPost({ action: 'estimateOverlap', pairs });
-    renderOverlapMatrix(results);
+    renderOverlapMatrix(el('overlap-matrix'), state.worklist, results);
     statusEl.textContent = '完成';
   } catch (e) {
     statusEl.textContent = '錯誤：' + e.message;
@@ -207,15 +218,15 @@ async function computeOverlap() {
   }
 }
 
-function renderOverlapMatrix(results) {
-  const table = el('overlap-matrix');
-  const idToName = Object.fromEntries(state.worklist.map((w) => [String(w.id), w.name]));
+// items: [{id, name}]，跟 state.worklist 無關——工作清單跟自行比對兩種情境共用同一個畫表格函式
+function renderOverlapMatrix(table, items, results) {
+  const idToName = Object.fromEntries(items.map((w) => [String(w.id), w.name]));
   const ratioByPair = {};
   results.forEach((r) => {
     ratioByPair[pairKey(r.interest_a, r.interest_b)] = r.overlap_ratio;
   });
 
-  const ids = state.worklist.map((w) => w.id);
+  const ids = items.map((w) => w.id);
   let html = '<tr><th></th>' + ids.map((id) => `<th>${idToName[id]}</th>`).join('') + '</tr>';
   ids.forEach((rowId) => {
     html += `<tr><th>${idToName[rowId]}</th>`;
@@ -231,6 +242,57 @@ function renderOverlapMatrix(results) {
   });
   table.innerHTML = html;
   table.style.display = 'table';
+}
+
+const MANUAL_COMPARE_MIN = 2;
+const MANUAL_COMPARE_MAX = 5;
+
+// 跟上面「搜尋 → 加進工作清單 → 算重疊」完全獨立：使用者直接打字給名稱，
+// 這裡才去反查對應的 Meta 興趣 id，不需要先經過搜尋結果點選的流程。
+async function resolveInterestByName_(name) {
+  const results = await apiGet('searchInterests', { q: name });
+  if (!results.length) throw new Error(`找不到「${name}」`);
+  const exact = results.find((r) => r.name.trim() === name.trim());
+  const picked = exact || results[0];
+  return { id: picked.id, name: picked.name };
+}
+
+async function computeManualOverlap() {
+  const statusEl = el('manual-compare-status');
+  const names = Array.from(document.querySelectorAll('.manual-compare-input'))
+    .map((input) => input.value.trim())
+    .filter(Boolean);
+
+  if (names.length < MANUAL_COMPARE_MIN || names.length > MANUAL_COMPARE_MAX) {
+    statusEl.textContent = `請輸入 ${MANUAL_COMPARE_MIN}～${MANUAL_COMPARE_MAX} 個標籤`;
+    statusEl.classList.add('error');
+    return;
+  }
+
+  statusEl.textContent = '比對名稱中…';
+  statusEl.classList.remove('error');
+  el('manual-overlap-matrix').style.display = 'none';
+
+  try {
+    const items = [];
+    for (const name of names) {
+      items.push(await resolveInterestByName_(name));
+    }
+
+    statusEl.textContent = '計算重疊中（每組要打好幾次 Meta API，會需要幾秒到十幾秒）…';
+    const pairs = [];
+    for (let i = 0; i < items.length; i++) {
+      for (let j = i + 1; j < items.length; j++) {
+        pairs.push([items[i].id, items[j].id]);
+      }
+    }
+    const { results } = await apiPost({ action: 'estimateOverlap', pairs });
+    renderOverlapMatrix(el('manual-overlap-matrix'), items, results);
+    statusEl.textContent = '完成（比對到的名稱：' + items.map((i) => i.name).join('、') + '）';
+  } catch (e) {
+    statusEl.textContent = '錯誤：' + e.message;
+    statusEl.classList.add('error');
+  }
 }
 
 function pairKey(a, b) {
