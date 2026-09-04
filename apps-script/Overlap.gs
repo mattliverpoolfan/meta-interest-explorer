@@ -60,7 +60,10 @@ function computeOverlapForPair_(idA, idB) {
   var sizeIntersection = deliveryEstimate_([{ interests: [{ id: idA }] }, { interests: [{ id: idB }] }]);
 
   var minSize = Math.min(sizeA, sizeB);
-  var ratio = minSize > 0 ? sizeIntersection / minSize : 0;
+  // Meta 的 delivery_estimate 是抽樣估算，不是精確集合運算——兩個高度重疊（甚至幾乎同義）
+  // 的標籤，交集偶爾會被估得比任一邊單獨的受眾還大。數學上交集不可能超過 min(A,B)，
+  // 這裡直接夾住，避免顯示出「重疊率 535000%」這種明顯不合理的數字。
+  var ratio = minSize > 0 ? Math.min(1, sizeIntersection / minSize) : 0;
 
   var totalPopulation = getTotalPopulationEstimate_();
   var expectedByChance = (totalPopulation > 0 && sizeA > 0 && sizeB > 0) ? (sizeA * sizeB / totalPopulation) : 0;

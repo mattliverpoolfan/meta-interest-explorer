@@ -203,10 +203,17 @@ function renderOverlapScanResults(results) {
   results.forEach((r) => {
     const li = document.createElement('li');
     const ratioText = (r.overlap_ratio * 100).toFixed(0) + '%';
-    const liftText = r.lift != null ? `lift ${r.lift.toFixed(1)}×` : '';
+    const liftText = r.lift != null ? `lift ${formatLift_(r.lift)}` : '';
     li.innerHTML = `<span class="name">${r.name}</span><span class="path">重疊率 ${ratioText}　${liftText}</span>`;
     listEl.appendChild(li);
   });
+}
+
+// lift 理論上沒有上限——兩個規模很小又高度相關的標籤，lift 算出幾十萬倍都是合理的
+// （代表遠超隨機巧合），但直接印出一長串小數位數字不好讀，超過 1000 就用精簡表示法。
+function formatLift_(lift) {
+  if (lift >= 1000) return lift.toExponential(1) + '×';
+  return lift.toFixed(1) + '×';
 }
 
 // items: [{id, name}]，跟 manual-compare 分頁共用同一個畫表格函式
