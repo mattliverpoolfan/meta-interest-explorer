@@ -6,7 +6,7 @@ const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxsLaM_z7wYqkJPfAVa0
 
 const state = {
   apiKey: localStorage.getItem('apiKey') || '',
-  worklist: [], // [{id, name, path}]
+  overlapPollTimer: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -23,15 +23,12 @@ function init() {
     history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : ''));
   }
 
-  el('search-btn').addEventListener('click', runSearch);
-  el('search-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
-  el('compute-overlap-btn').addEventListener('click', computeOverlap);
-  el('copy-for-ai-btn').addEventListener('click', copyForAI);
+  el('search-btn').addEventListener('click', runUnifiedSearch);
+  el('search-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runUnifiedSearch(); });
   el('manual-compare-btn').addEventListener('click', computeManualOverlap);
   initTabs();
 
   loadCategories();
-  renderWorklist();
 }
 
 // 探索/檢索跟自行比對是兩個獨立情境，不是同一套流程的前後步驟——用分頁切換，
@@ -108,7 +105,7 @@ async function loadCategories() {
       li.title = safeParsePath(c.path).join(' > ');
       li.addEventListener('click', () => {
         el('search-input').value = c.name;
-        runSearch();
+        runUnifiedSearch();
       });
       list.appendChild(li);
     });
@@ -117,108 +114,102 @@ async function loadCategories() {
   }
 }
 
-async function runSearch() {
-  const q = el('search-input').value.trim();
-  const statusEl = el('search-status');
-  if (!q) return;
-  statusEl.textContent = '搜尋中…';
-  statusEl.classList.remove('error');
-  try {
-    const results = await apiGet('searchInterests', { q });
-    const list = el('search-results');
-    list.innerHTML = '';
-    results.slice(0, 100).forEach((item) => {
-      const li = document.createElement('li');
-      const pathText = safeParsePath(item.path).join(' > ');
-      li.textContent = `${item.name}（${pathText}）`;
-      li.addEventListener('click', () => addToWorklist(item));
-      list.appendChild(li);
-    });
-    statusEl.textContent = `找到 ${results.length} 筆`;
-  } catch (e) {
-    statusEl.textContent = '錯誤：' + e.message;
-    statusEl.classList.add('error');
-  }
-}
-
 function safeParsePath(path) {
   if (Array.isArray(path)) return path;
   try { return JSON.parse(path || '[]'); } catch (e) { return []; }
 }
 
-function addToWorklist(item) {
-  if (state.worklist.some((w) => String(w.id) === String(item.id))) return;
-  state.worklist.push({ id: item.id, name: item.name, path: safeParsePath(item.path) });
-  renderWorklist();
-}
+const OVERLAP_POLL_INTERVAL_MS = 3000;
 
-function removeFromWorklist(id) {
-  state.worklist = state.worklist.filter((w) => String(w.id) !== String(id));
-  renderWorklist();
-}
+// 一次搜尋、三類結果同時呈現：直接相關/邏輯間接相關同步查完直接回傳，
+// 受眾重疊比對（第三類）另外交給後端非同步跑，這裡只負責啟動輪詢。
+async function runUnifiedSearch() {
+  const q = el('search-input').value.trim();
+  const statusEl = el('search-status');
+  if (!q) return;
 
-function renderWorklist() {
-  const container = el('worklist');
-  container.innerHTML = '';
-  if (!state.worklist.length) {
-    container.innerHTML = '<div class="status">從左邊搜尋結果點選，加進這裡</div>';
-  }
-  state.worklist.forEach((item) => {
-    const div = document.createElement('div');
-    div.className = 'workitem';
-    div.innerHTML = `
-      <div class="name">${item.name}</div>
-      <div class="path">${item.path.join(' > ')}</div>
-      <div class="actions">
-        <button data-action="related">找相關</button>
-        <button data-action="remove">移除</button>
-      </div>
-    `;
-    div.querySelector('[data-action="related"]').addEventListener('click', () => findRelated(item));
-    div.querySelector('[data-action="remove"]').addEventListener('click', () => removeFromWorklist(item.id));
-    container.appendChild(div);
-  });
-  el('compute-overlap-btn').disabled = state.worklist.length < 2;
-}
-
-async function findRelated(item) {
-  try {
-    // 一併帶上名稱：Meta 的 suggestion API 吃名稱，後端才不用回頭去 Sheet 反查
-    const suggestions = await apiGet('suggestRelated', { seed_ids: item.id, seed_names: item.name });
-    const list = el('suggestion-list');
-    list.innerHTML = '';
-    suggestions.forEach((item) => {
-      const li = document.createElement('li');
-      li.textContent = item.name + (item.audience_size ? `（${item.audience_size}）` : '');
-      li.addEventListener('click', () => addToWorklist(item));
-      list.appendChild(li);
-    });
-  } catch (e) {
-    alert('找相關失敗：' + e.message);
-  }
-}
-
-async function computeOverlap() {
-  const statusEl = el('worklist-status');
-  statusEl.textContent = '計算重疊中（每組要打好幾次 Meta API，會需要幾秒到十幾秒）…';
+  stopOverlapPolling_();
+  statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證，會需要幾秒）…';
   statusEl.classList.remove('error');
+  renderResultList(el('direct-results'), []);
+  renderResultList(el('indirect-results'), []);
+  el('overlap-scan-progress').textContent = '';
+  renderOverlapScanResults([]);
+
   try {
-    const pairs = [];
-    for (let i = 0; i < state.worklist.length; i++) {
-      for (let j = i + 1; j < state.worklist.length; j++) {
-        pairs.push([state.worklist[i].id, state.worklist[j].id]);
-      }
+    const { direct, indirect, overlapScan } = await apiPost({ action: 'unifiedSearch', query: q });
+    renderResultList(el('direct-results'), direct);
+    renderResultList(el('indirect-results'), indirect);
+    statusEl.textContent = `直接相關 ${direct.length} 筆、間接相關 ${indirect.length} 筆`;
+
+    if (overlapScan) {
+      el('overlap-scan-progress').textContent = `以「${overlapScan.seedName}」為種子，比對中… 0/${overlapScan.total}`;
+      pollOverlapScan(overlapScan.scanId);
+    } else {
+      el('overlap-scan-progress').textContent = '找不到可以當比對種子的直接相關標籤，這次搜尋沒有第三類結果';
     }
-    const { results } = await apiPost({ action: 'estimateOverlap', pairs });
-    renderOverlapMatrix(el('overlap-matrix'), state.worklist, results);
-    statusEl.textContent = '完成';
   } catch (e) {
     statusEl.textContent = '錯誤：' + e.message;
     statusEl.classList.add('error');
   }
 }
 
-// items: [{id, name}]，跟 state.worklist 無關——工作清單跟自行比對兩種情境共用同一個畫表格函式
+function renderResultList(listEl, items) {
+  listEl.innerHTML = '';
+  if (!items.length) {
+    listEl.innerHTML = '<li class="empty">（沒有結果）</li>';
+    return;
+  }
+  items.forEach((item) => {
+    const li = document.createElement('li');
+    const pathText = safeParsePath(item.path).join(' > ');
+    li.innerHTML = `<span class="name">${item.name}</span>` + (pathText ? `<span class="path">${pathText}</span>` : '');
+    listEl.appendChild(li);
+  });
+}
+
+function stopOverlapPolling_() {
+  if (state.overlapPollTimer) {
+    clearTimeout(state.overlapPollTimer);
+    state.overlapPollTimer = null;
+  }
+}
+
+function pollOverlapScan(scanId) {
+  const tick = async () => {
+    try {
+      const status = await apiGet('overlapScanStatus', { scanId });
+      if (status.replaced) {
+        el('overlap-scan-progress').textContent = '這個比對已經被之後的新搜尋取代，這次搜尋就不會有第三類結果了';
+        return;
+      }
+      el('overlap-scan-progress').textContent = `以「${status.seedName}」為種子，比對中… ${status.done}/${status.total}`;
+      renderOverlapScanResults(status.results);
+      if (status.running) {
+        state.overlapPollTimer = setTimeout(tick, OVERLAP_POLL_INTERVAL_MS);
+      } else {
+        el('overlap-scan-progress').textContent = `以「${status.seedName}」為種子，比對完成（共 ${status.total} 筆）`;
+      }
+    } catch (e) {
+      el('overlap-scan-progress').textContent = '比對進度查詢失敗：' + e.message;
+    }
+  };
+  tick();
+}
+
+function renderOverlapScanResults(results) {
+  const listEl = el('overlap-scan-results');
+  listEl.innerHTML = '';
+  results.forEach((r) => {
+    const li = document.createElement('li');
+    const ratioText = (r.overlap_ratio * 100).toFixed(0) + '%';
+    const liftText = r.lift != null ? `lift ${r.lift.toFixed(1)}×` : '';
+    li.innerHTML = `<span class="name">${r.name}</span><span class="path">重疊率 ${ratioText}　${liftText}</span>`;
+    listEl.appendChild(li);
+  });
+}
+
+// items: [{id, name}]，跟 manual-compare 分頁共用同一個畫表格函式
 function renderOverlapMatrix(table, items, results) {
   const idToName = Object.fromEntries(items.map((w) => [String(w.id), w.name]));
   const ratioByPair = {};
@@ -247,7 +238,7 @@ function renderOverlapMatrix(table, items, results) {
 const MANUAL_COMPARE_MIN = 2;
 const MANUAL_COMPARE_MAX = 5;
 
-// 跟上面「搜尋 → 加進工作清單 → 算重疊」完全獨立：使用者直接打字給名稱，
+// 跟上面「一次搜尋三類結果」完全獨立：使用者直接打字給名稱，
 // 這裡才去反查對應的 Meta 興趣 id，不需要先經過搜尋結果點選的流程。
 async function resolveInterestByName_(name) {
   const results = await apiGet('searchInterests', { q: name });
@@ -304,19 +295,6 @@ function ratioToColor(ratio) {
   // 0% 白 → 100% 紅，重疊越高越顯眼，提醒不要疊用
   const intensity = Math.round(ratio * 200);
   return `rgb(255, ${255 - intensity}, ${255 - intensity})`;
-}
-
-function copyForAI() {
-  if (!state.worklist.length) return;
-  const lines = ['以下是我從 Meta 興趣受眾探索工具挑出的候選興趣，請在這個範圍內幫我做受眾發想：', ''];
-  state.worklist.forEach((item) => {
-    lines.push(`- ${item.name}（分類：${item.path.join(' > ') || '未知'}）`);
-  });
-  const text = lines.join('\n');
-  navigator.clipboard.writeText(text).then(() => {
-    el('worklist-status').textContent = '已複製到剪貼簿，可以貼到 Claude / ChatGPT 對話裡了';
-    el('worklist-status').classList.remove('error');
-  });
 }
 
 init();

@@ -84,6 +84,20 @@ body {
   max-width: 720px;
 }
 
+.explore-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 16px;
+  padding: 16px 20px;
+  align-items: start;
+}
+
+.explore-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -99,23 +113,58 @@ body {
   margin: 0 0 10px;
 }
 
-#category-list, #search-results, #suggestion-list {
+#category-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 60vh;
+  max-height: 70vh;
   overflow-y: auto;
 }
 
-#category-list li, #search-results li, #suggestion-list li {
+#category-list li {
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
 }
 
-#category-list li:hover, #search-results li:hover, #suggestion-list li:hover {
+#category-list li:hover {
   background: var(--accent-weak);
+}
+
+.result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.result-list li.empty {
+  color: var(--muted);
+  border-style: dashed;
+  justify-content: center;
+}
+
+.result-list .name {
+  font-weight: 600;
+}
+
+.result-list .path {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .searchbox {
@@ -152,37 +201,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.workitem {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 8px;
-}
-
-.workitem .name {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.workitem .path {
-  font-size: 11px;
-  color: var(--muted);
-  margin: 2px 0 6px;
-}
-
-.workitem .actions {
-  display: flex;
-  gap: 6px;
-}
-
-#overlap-matrix, #manual-overlap-matrix {
+#manual-overlap-matrix {
   border-collapse: collapse;
   width: 100%;
   font-size: 12px;
   margin-top: 10px;
 }
 
-#overlap-matrix th, #overlap-matrix td,
 #manual-overlap-matrix th, #manual-overlap-matrix td {
   border: 1px solid var(--border);
   padding: 6px;

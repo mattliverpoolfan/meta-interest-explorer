@@ -21,7 +21,7 @@ var SHEET_HEADERS = {
   Categories: ['id', 'name', 'path', 'audience_size_lower_bound', 'audience_size_upper_bound', 'last_seen_at'],
   Snapshots: ['snapshot_id', 'started_at', 'finished_at', 'keywords_used_count', 'interests_found_count', 'new_interest_ids', 'removed_interest_ids', 'status'],
   RelatedCache: ['seed_interest_id', 'related_json', 'computed_at'],
-  OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'computed_at'],
+  OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'lift', 'computed_at'],
   SeedKeywords: ['keyword'],
 };
 

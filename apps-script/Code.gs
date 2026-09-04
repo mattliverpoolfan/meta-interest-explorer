@@ -14,6 +14,7 @@ function doGet(e) {
     if (action === 'categoryTree') return jsonOutput_(readSheetAsObjects_(SHEETS.CATEGORIES));
     if (action === 'suggestRelated') return jsonOutput_(handleSuggestRelated_(e.parameter.seed_ids, e.parameter.seed_names));
     if (action === 'refreshStatus') return jsonOutput_(getRefreshStatus_());
+    if (action === 'overlapScanStatus') return jsonOutput_(getOverlapScanStatus_(e.parameter.scanId));
     return jsonOutput_({ error: '未知的 action：' + action });
   } catch (err) {
     return jsonOutput_({ error: err.message });
@@ -26,6 +27,10 @@ function doPost(e) {
     if (body.action === 'estimateOverlap') {
       requireApiKey_(body.apiKey);
       return jsonOutput_({ results: estimateOverlapForPairs_(body.pairs || []) });
+    }
+    if (body.action === 'unifiedSearch') {
+      requireApiKey_(body.apiKey);
+      return jsonOutput_(handleUnifiedSearch_(body.query));
     }
     if (body.action === 'refreshSnapshot') {
       requireApiKey_(body.apiKey);

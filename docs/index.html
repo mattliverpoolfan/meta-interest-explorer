@@ -12,35 +12,41 @@
 </div>
 
 <div class="tabpanel" data-tabpanel="explore">
-  <div class="layout">
-    <section class="panel">
+  <div class="explore-layout">
+    <aside class="panel category-panel">
       <h2>分類瀏覽</h2>
+      <p class="status">點一下分類名稱，會直接帶入搜尋框並開始搜尋。</p>
       <ul id="category-list"></ul>
-    </section>
+    </aside>
 
-    <section class="panel">
-      <h2>搜尋興趣</h2>
-      <div class="searchbox">
-        <input id="search-input" placeholder="輸入關鍵字，例如「跑步」">
-        <button id="search-btn" class="primary">搜尋</button>
-      </div>
-      <ul id="search-results"></ul>
-      <div id="search-status" class="status"></div>
+    <div class="explore-main">
+      <section class="panel">
+        <div class="searchbox">
+          <input id="search-input" placeholder="輸入產品、品牌或概念，例如「慢跑鞋」">
+          <button id="search-btn" class="primary">搜尋</button>
+        </div>
+        <div id="search-status" class="status"></div>
+      </section>
 
-      <h2 style="margin-top:20px">相關建議</h2>
-      <ul id="suggestion-list"></ul>
-    </section>
+      <section class="panel result-section">
+        <h2>① 直接相關</h2>
+        <p class="status">字面同義詞、直覺聯想得到的興趣——AI 幫忙聯想候選詞，但每一個都經過 Meta 實際驗證存在才會顯示。</p>
+        <ul id="direct-results" class="result-list"></ul>
+      </section>
 
-    <section class="panel">
-      <h2>工作清單</h2>
-      <div id="worklist"></div>
-      <div style="display:flex; gap:8px; margin-top:10px;">
-        <button id="compute-overlap-btn">算重疊</button>
-        <button id="copy-for-ai-btn" class="primary">複製給 AI</button>
-      </div>
-      <table id="overlap-matrix" style="display:none"></table>
-      <div id="worklist-status" class="status"></div>
-    </section>
+      <section class="panel result-section">
+        <h2>② 邏輯上間接相關</h2>
+        <p class="status">不是同義詞，是推理「這群受眾背後還會在意什麼」得到的候選，一樣經過 Meta 驗證存在。</p>
+        <ul id="indirect-results" class="result-list"></ul>
+      </section>
+
+      <section class="panel result-section">
+        <h2>③ 受眾重疊比對</h2>
+        <p class="status">看似不相關但受眾實際重疊——這類需要花時間逐一比對 Meta 真實受眾規模，沒辦法即時算完，會持續更新進度。</p>
+        <div id="overlap-scan-progress" class="status"></div>
+        <ul id="overlap-scan-results" class="result-list"></ul>
+      </section>
+    </div>
   </div>
 </div>
 
