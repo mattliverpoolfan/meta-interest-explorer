@@ -59,13 +59,24 @@ function searchAdInterest_(query, limit, isLiveQuery) {
     var accountPath = '/act_' + config.accountId.replace(/^act_/, '');
     try {
       var json = metaGet_(accountPath + '/targetingsearch', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 50 });
-      return json.data || [];
+      return filterToInterestClass_(json.data || []);
     } catch (e) {
       Logger.log('targetingsearch 失敗，退回 /search：' + e.message);
     }
   }
   var fallback = metaGet_('/search', { type: 'adinterest', q: query, locale: 'zh_TW', limit: limit || 200 });
-  return fallback.data || [];
+  return filterToInterestClass_(fallback.data || []);
+}
+
+/**
+ * 關鍵字沒有足夠精準匹配時，Meta 會用「行為」「人口統計資料」這類其他 class
+ * 的熱門項目把結果補滿（例如搜「駱駝」會混進「新婚（不到一年）」）。
+ * 每筆結果的 path[0] 就是所屬 class，只留 path[0] === '興趣' 的。
+ */
+function filterToInterestClass_(items) {
+  return items.filter(function (item) {
+    return item.path && item.path[0] === '興趣';
+  });
 }
 
 /** 給定興趣名稱清單，找 Meta 認為相關的其他興趣（type=adinterestsuggestion） */
