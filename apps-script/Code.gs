@@ -57,10 +57,7 @@ function requireApiKey_(key) {
 
 function handleSearchInterests_(q) {
   if (!q) return [];
-  var query = String(q).toLowerCase();
-  var cached = readSheetAsObjects_(SHEETS.INTERESTS).filter(function (row) {
-    return String(row.name).toLowerCase().indexOf(query) !== -1;
-  });
+  var cached = searchCachedInterests_(q);
   if (cached.length) return cached;
   // 快取沒有才即時查 Meta；傳入 isLiveQuery=true 使用 targetingsearch 自動過濾無效標籤
   return searchAdInterest_(q, 50, true);

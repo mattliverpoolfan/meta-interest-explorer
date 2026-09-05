@@ -46,19 +46,19 @@ function buildCandidatePrompt_(query) {
 }
 
 /**
- * 回傳 {direct: string[], indirect: string[]}。
- * Gemini 呼叫失敗（額度、網路、格式跑掉）一律吞掉回傳空陣列，
- * 讓呼叫端可以退回到「只用原始字詞查詢」，不能讓整個搜尋掛掉。
+ * Gemini generateContent 的共用呼叫封裝，回傳解析後的 JSON（依 schema），失敗回傳 null。
+ * 呼叫端自己決定失敗時的退路——這裡不 throw，因為 AI 這塊都是「錦上添花」，
+ * 不能讓 Gemini 的額度/網路問題擋掉整個搜尋。
  */
-function classifyInterestCandidates_(query) {
+function callGemini_(prompt, schema) {
   try {
     var config = getGeminiConfig_();
     var url = GEMINI_BASE + '/' + config.model + ':generateContent?key=' + encodeURIComponent(config.apiKey);
     var payload = {
-      contents: [{ parts: [{ text: buildCandidatePrompt_(query) }] }],
+      contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: CANDIDATE_RESPONSE_SCHEMA,
+        responseSchema: schema,
       },
     };
     var response = UrlFetchApp.fetch(url, {
@@ -71,7 +71,7 @@ function classifyInterestCandidates_(query) {
     var body = response.getContentText();
     if (code !== 200) {
       Logger.log('Gemini API 錯誤（HTTP ' + code + '）：' + body.slice(0, 500));
-      return { direct: [], indirect: [] };
+      return null;
     }
     var json = JSON.parse(body);
     var text = json.candidates && json.candidates[0] && json.candidates[0].content &&
@@ -79,15 +79,87 @@ function classifyInterestCandidates_(query) {
       json.candidates[0].content.parts[0].text;
     if (!text) {
       Logger.log('Gemini 回應沒有內容：' + body.slice(0, 500));
-      return { direct: [], indirect: [] };
+      return null;
     }
-    var parsed = JSON.parse(text);
-    return {
-      direct: Array.isArray(parsed.direct) ? parsed.direct : [],
-      indirect: Array.isArray(parsed.indirect) ? parsed.indirect : [],
-    };
+    return JSON.parse(text);
   } catch (e) {
-    Logger.log('classifyInterestCandidates_ 失敗，退回空清單：' + e.message);
-    return { direct: [], indirect: [] };
+    Logger.log('callGemini_ 失敗：' + e.message);
+    return null;
   }
+}
+
+/**
+ * 回傳 {direct: string[], indirect: string[]}。
+ * Gemini 呼叫失敗（額度、網路、格式跑掉）一律吞掉回傳空陣列，
+ * 讓呼叫端可以退回到「只用原始字詞查詢」，不能讓整個搜尋掛掉。
+ */
+function classifyInterestCandidates_(query) {
+  var parsed = callGemini_(buildCandidatePrompt_(query), CANDIDATE_RESPONSE_SCHEMA);
+  if (!parsed) return { direct: [], indirect: [] };
+  return {
+    direct: Array.isArray(parsed.direct) ? parsed.direct : [],
+    indirect: Array.isArray(parsed.indirect) ? parsed.indirect : [],
+  };
+}
+
+var CLASSIFY_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    results: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          bucket: { type: 'STRING', enum: ['direct', 'indirect', 'unrelated'] },
+          tier: { type: 'INTEGER' },
+        },
+        required: ['bucket', 'tier'],
+      },
+    },
+  },
+  required: ['results'],
+};
+
+/**
+ * candidates: [{term, name}]——term 是拿去查 Meta 的搜尋詞（可能是使用者原始字詞，
+ * 也可能是 AI 聯想出的候選詞），name 是 Meta 已經確認真實存在的標籤名稱。
+ *
+ * 這一步做的是「重新分類」，不是「篩選」：每一筆都已經是 Meta 真實存在的標籤，這裡
+ * 只決定它該落在哪一類、間接相關的話關聯強度多少。刻意不依賴「它是從哪個搜尋詞查到
+ * 的」來決定分類——搜尋詞本身可能就是誤判的來源（Meta 對查無精準匹配的字詞常會補位
+ * 不相關的熱門標籤，例如搜「SPA」卻查到「動作片」），所以即使某筆是從一個「直接」
+ * 搜尋詞查到的，只要實際上關聯薄弱也要判成 unrelated 整個排除；反過來，只要關聯夠
+ * 直接，就算來源詞是系統標成「間接」的，也可以被歸類成 direct。
+ *
+ * bucket: 'direct' 直接相關 / 'indirect' 邏輯上間接相關 / 'unrelated' 完全無關（丟掉，
+ * 不顯示給使用者）。
+ * tier：只有 bucket='indirect' 時才有意義，1=高關聯度（邏輯清楚，適合優先測試）、
+ * 2=中關聯度（合理但需要驗證）、3=推測性關聯（跳躍程度較大，適合大膽嘗試）；
+ * bucket 不是 indirect 時填 0。
+ *
+ * 回傳跟 candidates 等長、順序一致的 {bucket, tier} 陣列；Gemini 失敗時全部退回
+ * bucket='direct'——寧可退回沒有分類/分級的舊版體驗，也不能讓這步的失敗擋掉整個搜尋。
+ */
+function classifyAndTierResults_(query, candidates) {
+  if (!candidates.length) return [];
+  var prompt = '使用者在 Meta 廣告受眾探索工具搜尋「' + query + '」。以下是系統實際查到、已經確認在 Meta ' +
+    '廣告後台真實存在的興趣標籤候選清單（JSON 陣列，term 是拿去搜尋的詞，name 是查到的標籤名稱）：\n' +
+    JSON.stringify(candidates.map(function (c) { return { term: c.term, name: c.name }; })) + '\n\n' +
+    '請針對每一筆，依照原本順序判斷該歸類到哪一類：\n\n' +
+    '"direct"（直接相關）：字面同義詞、非常直覺會聯想到的興趣，或本身就是使用者輸入字詞的常見說法差異。\n\n' +
+    '"indirect"（邏輯上間接相關）：不是同義詞，但背後推理得通——這群人因為某個共同的受眾輪廓，也會對這個' +
+    '主題感興趣（例如搜「SPA」查到「度假村」：不是同義詞，但 SPA 度假村是合理的關聯情境）。這類要再給 ' +
+    'tier：1=高關聯度（邏輯清楚，適合優先測試）、2=中關聯度（合理但需要驗證）、3=推測性關聯（跳躍程度' +
+    '較大，適合大膽嘗試）。\n\n' +
+    '"unrelated"（完全無關）：Meta 搜尋 API 查無精準匹配時常會補位一些毫不相干的熱門標籤（例如搜「單車」' +
+    '卻混進「劇情片」），這種即使它是從某個看起來像直接相關的搜尋詞查到的，只要實際上想不出任何合理' +
+    '關聯，都要判成 unrelated，這樣系統才會把它整個排除、不顯示給使用者。\n\n' +
+    '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"bucket": "...", "tier": 數字}' +
+    '（bucket 不是 indirect 時 tier 填 0）。';
+  var parsed = callGemini_(prompt, CLASSIFY_RESPONSE_SCHEMA);
+  if (!parsed || !Array.isArray(parsed.results) || parsed.results.length !== candidates.length) {
+    Logger.log('classifyAndTierResults_ 回傳格式不對或失敗，退回全部視為 direct（沒有分類/分級）');
+    return candidates.map(function () { return { bucket: 'direct', tier: 0 }; });
+  }
+  return parsed.results;
 }

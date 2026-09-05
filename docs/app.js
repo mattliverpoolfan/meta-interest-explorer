@@ -129,18 +129,23 @@ async function runUnifiedSearch() {
   if (!q) return;
 
   stopOverlapPolling_();
-  statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證，會需要幾秒）…';
+  statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證 + 關聯性複查，會需要幾秒）…';
   statusEl.classList.remove('error');
   renderResultList(el('direct-results'), []);
-  renderResultList(el('indirect-results'), []);
+  renderResultList(el('indirect-high'), []);
+  renderResultList(el('indirect-medium'), []);
+  renderResultList(el('indirect-speculative'), []);
   el('overlap-scan-progress').textContent = '';
   renderOverlapScanResults([]);
 
   try {
     const { direct, indirect, overlapScan } = await apiPost({ action: 'unifiedSearch', query: q });
-    renderResultList(el('direct-results'), direct);
-    renderResultList(el('indirect-results'), indirect);
-    statusEl.textContent = `直接相關 ${direct.length} 筆、間接相關 ${indirect.length} 筆`;
+    renderDirectResults(direct);
+    renderResultList(el('indirect-high'), indirect.high);
+    renderResultList(el('indirect-medium'), indirect.medium);
+    renderResultList(el('indirect-speculative'), indirect.speculative);
+    const indirectTotal = indirect.high.length + indirect.medium.length + indirect.speculative.length;
+    statusEl.textContent = `直接相關 ${direct.length} 筆、間接相關 ${indirectTotal} 筆`;
 
     if (overlapScan) {
       el('overlap-scan-progress').textContent = `以「${overlapScan.seedName}」為種子，比對中… 0/${overlapScan.total}`;
@@ -152,6 +157,18 @@ async function runUnifiedSearch() {
     statusEl.textContent = '錯誤：' + e.message;
     statusEl.classList.add('error');
   }
+}
+
+// 直接相關查無結果不是「壞掉」，是「這個字詞在 Meta 後台沒有直接對應的標籤」——
+// 明確告訴使用者、並指向下面的間接相關，而不是留一個看起來像沒load出來的空清單。
+function renderDirectResults(items) {
+  const listEl = el('direct-results');
+  listEl.innerHTML = '';
+  if (!items.length) {
+    listEl.innerHTML = '<li class="empty-hint">查無直接相關標籤——請參考下方②「邏輯上間接相關」的聯想結果</li>';
+    return;
+  }
+  renderResultList(listEl, items);
 }
 
 function renderResultList(listEl, items) {

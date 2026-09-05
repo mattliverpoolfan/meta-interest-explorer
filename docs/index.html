@@ -30,14 +30,26 @@
 
       <section class="panel result-section">
         <h2>① 直接相關</h2>
-        <p class="status">字面同義詞、直覺聯想得到的興趣——AI 幫忙聯想候選詞，但每一個都經過 Meta 實際驗證存在才會顯示。</p>
+        <p class="status">字面同義詞、直覺聯想得到的興趣——AI 幫忙聯想候選詞，但每一個都經過 Meta 實際驗證存在、且經過關聯性複查才會顯示。</p>
         <ul id="direct-results" class="result-list"></ul>
       </section>
 
-      <section class="panel result-section">
+      <section class="panel result-section" id="indirect-section">
         <h2>② 邏輯上間接相關</h2>
-        <p class="status">不是同義詞，是推理「這群受眾背後還會在意什麼」得到的候選，一樣經過 Meta 驗證存在。</p>
-        <ul id="indirect-results" class="result-list"></ul>
+        <p class="status">不是同義詞，是推理「這群受眾背後還會在意什麼」得到的候選，一樣經過 Meta 驗證存在——依關聯強度分三級：越強邏輯越清楚、適合優先測試；越弱跳躍越大，適合大膽嘗試新方向。</p>
+
+        <div class="tier-block">
+          <h3 class="tier-label tier-high">高關聯度 <span class="tier-hint">邏輯清楚，適合優先測試</span></h3>
+          <ul id="indirect-high" class="result-list"></ul>
+        </div>
+        <div class="tier-block">
+          <h3 class="tier-label tier-medium">中關聯度 <span class="tier-hint">合理但需要驗證</span></h3>
+          <ul id="indirect-medium" class="result-list"></ul>
+        </div>
+        <div class="tier-block">
+          <h3 class="tier-label tier-speculative">推測性關聯 <span class="tier-hint">跳躍較大，適合大膽嘗試</span></h3>
+          <ul id="indirect-speculative" class="result-list"></ul>
+        </div>
       </section>
 
       <section class="panel result-section">

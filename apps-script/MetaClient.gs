@@ -49,6 +49,22 @@ function metaGet_(path, params) {
 }
 
 /**
+ * 先查已知標籤快取（Interests 分頁），命中就直接回傳、不用打 Meta。
+ * 這不只是省 API 額度：2026-09-04 實測證實，Meta 的即時 targetingsearch
+ * 在查無精準匹配時會用同一個 class 裡的超大眾標籤（電影類型：劇情片／動作片／
+ * 經典喜劇片）補滿結果，補位項目跟查詢字詞可能毫無關係（實測拿去算重疊，
+ * lift 都只有 1.6~1.9 倍，跟真正的關聯訊號差很多）。快取是先前批次掃描
+ * 已經驗證過的真實標籤，走快取就完全不會碰到這個問題。
+ */
+function searchCachedInterests_(query) {
+  if (!query) return [];
+  var q = String(query).toLowerCase();
+  return readSheetAsObjects_(SHEETS.INTERESTS).filter(function (row) {
+    return String(row.name).toLowerCase().indexOf(q) !== -1;
+  });
+}
+
+/**
  * 用關鍵字搜尋興趣。
  * isLiveQuery: true 時使用廣告帳戶專屬 targetingsearch（過濾後台不可投放標籤，單筆搜尋用）；
  * false 或未指定時使用 /search（批次掃描用，避免短時間大量請求撞到廣告帳戶的 80004 限速）。
