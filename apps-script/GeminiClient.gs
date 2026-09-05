@@ -51,7 +51,7 @@ function buildCandidatePrompt_(query) {
     '每個詞盡量精簡（2~6 個字），適合直接拿去 Meta 廣告後台的興趣搜尋框查詢，不要加任何說明文字。';
 }
 
-var GEMINI_CALL_ATTEMPTS = 2;
+var GEMINI_CALL_ATTEMPTS = 3;
 var GEMINI_RETRY_DELAY_MS = 800;
 
 /**
