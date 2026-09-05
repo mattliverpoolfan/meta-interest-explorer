@@ -104,11 +104,30 @@ function verifyTermsAgainstMeta_(terms) {
   return out;
 }
 
-/** 種子：直接相關裡跟原始字詞完全同名的優先，否則取直接相關第一筆；都沒有就跳過第三類 */
+/**
+ * 種子：直接相關裡跟原始字詞完全同名的優先。
+ *
+ * 沒有精準對應時，不能只挑「清單第一筆」——實測證實這樣會挑到像「健身和保健（健身）」
+ * 這種 Meta 分類樹最上層的籠統大分類。這種大分類拿去跟候選池裡「剛好是它自己子分類」
+ * 的標籤算交集，Meta 的 delivery_estimate 常會直接報錯、我們的容錯機制把錯誤吞掉降級
+ * 回傳 0，導致整批比對結果變成一堆無意義的 0%（唯一沒污染到的，只有候選池裡剛好不屬於
+ * 它子樹的標籤）。改成挑直接相關裡「受眾規模最小」的——越具體、越小眾的標籤，才是比對
+ * 重疊時有意義的錨點，也剛好天生避開「拿大分類當種子」這個問題，因為籠統大分類幾乎必然
+ * 是同一群直接相關結果裡受眾最大的那個。
+ */
 function pickSeed_(query, directResults) {
   if (!directResults.length) return null;
   var exact = directResults.filter(function (item) { return item.name === query; });
-  return exact.length ? exact[0] : directResults[0];
+  if (exact.length) return exact[0];
+
+  var bySize = directResults.map(function (item) {
+    var lower = Number(item.audience_size_lower_bound) || 0;
+    var upper = Number(item.audience_size_upper_bound) || lower;
+    var size = (lower + upper) / 2;
+    return { item: item, size: size > 0 ? size : Infinity };
+  });
+  bySize.sort(function (a, b) { return a.size - b.size; });
+  return bySize[0].item;
 }
 
 /**
