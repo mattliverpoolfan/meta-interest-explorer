@@ -2,5 +2,34 @@
 node_modules/
 apps-script/.clasp.json
 
-# 內部交接筆記——repo 是 public 的，帳戶 ID/部署細節這類維運資訊不該進公開歷史紀錄
+# 內部交接筆記——舊 public repo 遺留的排除規則，這個私有 repo 已經把等同內容整理進 CLAUDE.md，
+# 但保留這條排除規則以防萬一這個檔案又出現在工作目錄裡。
 HANDOFF.md
+
+# 環境變數 / 密鑰
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.clasprc.json
+
+# Python 虛擬環境與套件快取
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+pip-wheel-metadata/
+
+# Node 套件快取
+.npm/
+.yarn/
+.pnpm-store/
+
+# 編輯器/系統雜項
+.idea/
+.vscode/
+*.log
