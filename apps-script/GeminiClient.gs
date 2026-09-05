@@ -93,6 +93,13 @@ function callGemini_(prompt, schema) {
       });
       var code = response.getResponseCode();
       var body = response.getContentText();
+      if (code === 429) {
+        // 429 是額度用完（實測抓到過免費方案每天 20 次的上限），重試沒有意義——
+        // Google 給的 retryDelay 是幾十秒起跳，不是這裡的重試間隔（不到 1 秒）救得了的，
+        // 而且每重試一次都是再消耗一次已經超額的額度，直接放棄比較乾脆。
+        Logger.log('Gemini API 額度用完（HTTP 429），不重試：' + body.slice(0, 300));
+        return null;
+      }
       if (code !== 200) {
         lastError = 'HTTP ' + code + '：' + body.slice(0, 300);
       } else {
@@ -188,6 +195,13 @@ function classifyAndTierResults_(query, candidates) {
     '"unrelated"（完全無關）：Meta 搜尋 API 查無精準匹配時常會補位一些毫不相干的熱門標籤（例如搜「單車」' +
     '卻混進「劇情片」），這種即使它是從某個看起來像直接相關的搜尋詞查到的，只要實際上想不出任何合理' +
     '關聯，都要判成 unrelated，這樣系統才會把它整個排除、不顯示給使用者。\n\n' +
+    '實際案例幫助你抓分寸：使用者搜尋一個混合健身競賽（例如 Hyrox）。查到「CrossFit Training」「高強度間歇' +
+    '訓練」「肌力訓練」「健身服務」——這些都還是健身訓練這個領域裡的東西，判 direct。查到「露營」「園藝」' +
+    '「旅遊和戶外活動創作者」——雖然都帶點「戶外」的味道，但露營是戶外休閒、園藝是居家嗜好、旅遊創作者是' +
+    '內容創作職業，這些已經是跟「健身訓練」不同的生活領域，不該判 direct；正確判法是 indirect（推理邏輯：' +
+    '願意報名高強度競賽的人，通常也是熱愛自我挑戰、熱衷戶外生活的人，所以也會對露營這類戶外休閒感興趣——' +
+    '這是受眾輪廓的間接推理，不是訓練方式的同領域延伸）。**判斷時只看這個候選標籤本身的性質，不要因為它' +
+    '看起來也沾得上「戶外」「運動」這類寬泛字眼，就放寬標準判成 direct**。\n\n' +
     '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"bucket": "...", "tier": 數字}' +
     '（bucket 不是 indirect 時 tier 填 0）。';
   var parsed = callGemini_(prompt, CLASSIFY_RESPONSE_SCHEMA);
