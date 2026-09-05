@@ -5,20 +5,45 @@
  * 這裡吐出來的東西絕對不會直接當成最終答案顯示給使用者。
  *
  * 手動在「專案設定 > 指令碼屬性」填入：
- *   GEMINI_API_KEY —— https://aistudio.google.com/apikey 申請
- *   GEMINI_MODEL   —— 選填，預設 gemini-2.5-flash
+ *   GEMINI_API_KEY    —— https://aistudio.google.com/apikey 申請
+ *   GEMINI_API_KEY_2  —— 選填，第二支金鑰（不同 Google 帳號/專案申請的獨立金鑰，
+ *                         額度不共用）。之後想再加第三支，比照這個命名規則加
+ *                         GEMINI_API_KEY_3，並在下面 getGeminiApiKeys_() 補一行即可。
+ *
+ * 2026-09-05 實測抓到：Gemini 免費方案的額度是「每個模型各自」每天限額（不是整個
+ * 帳號共用一包），所以某個模型的額度用完時，換一個模型打還是有機會成功。這裡改成
+ * 「依智慧程度排序的模型清單 × 所有可用金鑰」的雙層 fallback：對最強的模型，把每一
+ * 支金鑰都試過一輪，才會退而求其次換下一個較弱的模型（一樣把每支金鑰都試一輪）。
+ * 不再讀取單一模型的 GEMINI_MODEL 屬性——已經被下面 GEMINI_MODEL_PRIORITY 取代。
  */
 
 var GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-function getGeminiConfig_() {
+/**
+ * 依智慧程度由強到弱排序，最上面優先用。這份排序是照 Google 一貫的命名慣例
+ * （Pro > Flash > Flash Lite；同系列世代數字越大越新）做的判斷，不是每個模型都
+ * 實測驗證過相對能力——如果之後發現某個模型的免費額度或實際表現跟這裡排的不一樣，
+ * 直接調整這個陣列順序即可，不用動其他程式碼。Pro 系列在免費方案通常沒有額度
+ * （呼叫會直接失敗被跳過），但保留在清單最前面，之後帳戶升級成付費方案就會自動
+ * 優先用到，不用再回來改程式碼。
+ */
+var GEMINI_MODEL_PRIORITY = [
+  'gemini-3.1-pro',
+  'gemini-2.5-pro',
+  'gemini-3-flash',
+  'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash-lite',
+];
+
+/** 依序讀取所有設定過的金鑰，沒設定的（例如還沒申請第二支）自動跳過。 */
+function getGeminiApiKeys_() {
   var props = PropertiesService.getScriptProperties();
-  var apiKey = props.getProperty('GEMINI_API_KEY');
-  if (!apiKey) throw new Error('缺少 Script Property: GEMINI_API_KEY');
-  return {
-    apiKey: apiKey,
-    model: props.getProperty('GEMINI_MODEL') || 'gemini-2.5-flash',
-  };
+  var keys = [
+    props.getProperty('GEMINI_API_KEY'),
+    props.getProperty('GEMINI_API_KEY_2'),
+  ];
+  return keys.filter(function (k) { return !!k; });
 }
 
 var CANDIDATE_RESPONSE_SCHEMA = {
@@ -51,28 +76,44 @@ function buildCandidatePrompt_(query) {
     '每個詞盡量精簡（2~6 個字），適合直接拿去 Meta 廣告後台的興趣搜尋框查詢，不要加任何說明文字。';
 }
 
-var GEMINI_CALL_ATTEMPTS = 3;
+var GEMINI_CALL_ATTEMPTS = 2; // 針對「同一組模型+金鑰」暫時性錯誤（非額度用完）的重試次數
 var GEMINI_RETRY_DELAY_MS = 800;
 
 /**
- * Gemini generateContent 的共用呼叫封裝，回傳解析後的 JSON（依 schema），失敗回傳 null。
- * 呼叫端自己決定失敗時的退路——這裡不 throw，因為 AI 這塊都是「錦上添花」，
- * 不能讓 Gemini 的額度/網路問題擋掉整個搜尋。
+ * Gemini generateContent 的共用呼叫封裝，回傳解析後的 JSON（依 schema），全部組合都
+ * 失敗才回傳 null。呼叫端自己決定失敗時的退路——這裡不 throw，因為 AI 這塊都是
+ * 「錦上添花」，不能讓 Gemini 的額度/網路問題擋掉整個搜尋。
  *
- * 實測過一次分類判斷（classifyAndTierResults_）因為單次呼叫的暫時性網路/額度問題失敗，
- * 導致整批結果退回「全部當作直接相關」、雜訊沒被濾掉——這種偶發失敗重試一次通常就過了，
- * 所以這裡跟前端 fetchJsonWithRetry 一樣加上重試，不能讓單次network hiccup 就讓使用者
- * 看到一坨沒分類過的原始結果。
+ * 依「模型（智慧程度由強到弱）× 金鑰」雙層跑：對最強的模型，把每一支金鑰都試過
+ * 一輪，才會換下一個較弱的模型——這樣同一次查詢會盡量用最好的模型，只有在那個
+ * 模型的所有金鑰都額度用完時，才會降級用次一級的模型。
  */
 function callGemini_(prompt, schema) {
-  var config;
-  try {
-    config = getGeminiConfig_();
-  } catch (e) {
-    Logger.log('callGemini_ 設定錯誤：' + e.message);
+  var apiKeys = getGeminiApiKeys_();
+  if (!apiKeys.length) {
+    Logger.log('callGemini_ 設定錯誤：找不到任何 GEMINI_API_KEY');
     return null;
   }
-  var url = GEMINI_BASE + '/' + config.model + ':generateContent?key=' + encodeURIComponent(config.apiKey);
+
+  for (var m = 0; m < GEMINI_MODEL_PRIORITY.length; m++) {
+    var model = GEMINI_MODEL_PRIORITY[m];
+    for (var k = 0; k < apiKeys.length; k++) {
+      var result = callGeminiOnce_(model, apiKeys[k], prompt, schema);
+      if (result !== null) return result;
+    }
+  }
+  Logger.log('callGemini_ 所有模型/金鑰組合都失敗，放棄');
+  return null;
+}
+
+/**
+ * 對「單一模型 + 單一金鑰」這個組合發出請求，失敗回傳 null 讓外層換下一組合。
+ * 429（額度用完）直接放棄不重試——Google 給的 retryDelay 是幾十秒起跳，不是這裡的
+ * 重試間隔（不到 1 秒）救得了的，換一組模型/金鑰組合比原地重試快得多也有用得多。
+ * 其他錯誤（網路、格式跑掉）才用短間隔重試個一兩次，這種通常是暫時性問題。
+ */
+function callGeminiOnce_(model, apiKey, prompt, schema) {
+  var url = GEMINI_BASE + '/' + model + ':generateContent?key=' + encodeURIComponent(apiKey);
   var payload = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
@@ -94,10 +135,7 @@ function callGemini_(prompt, schema) {
       var code = response.getResponseCode();
       var body = response.getContentText();
       if (code === 429) {
-        // 429 是額度用完（實測抓到過免費方案每天 20 次的上限），重試沒有意義——
-        // Google 給的 retryDelay 是幾十秒起跳，不是這裡的重試間隔（不到 1 秒）救得了的，
-        // 而且每重試一次都是再消耗一次已經超額的額度，直接放棄比較乾脆。
-        Logger.log('Gemini API 額度用完（HTTP 429），不重試：' + body.slice(0, 300));
+        Logger.log(model + '（金鑰末四碼 ' + apiKey.slice(-4) + '）額度用完（HTTP 429），換下一組：' + body.slice(0, 200));
         return null;
       }
       if (code !== 200) {
@@ -118,7 +156,7 @@ function callGemini_(prompt, schema) {
     }
     if (attempt < GEMINI_CALL_ATTEMPTS) Utilities.sleep(GEMINI_RETRY_DELAY_MS);
   }
-  Logger.log('callGemini_ 重試 ' + GEMINI_CALL_ATTEMPTS + ' 次都失敗：' + lastError);
+  Logger.log(model + '（金鑰末四碼 ' + apiKey.slice(-4) + '）重試 ' + GEMINI_CALL_ATTEMPTS + ' 次都失敗，換下一組：' + lastError);
   return null;
 }
 
