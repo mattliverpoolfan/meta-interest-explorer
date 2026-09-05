@@ -45,47 +45,68 @@ function buildCandidatePrompt_(query) {
     '每個詞盡量精簡（2~6 個字），適合直接拿去 Meta 廣告後台的興趣搜尋框查詢，不要加任何說明文字。';
 }
 
+var GEMINI_CALL_ATTEMPTS = 2;
+var GEMINI_RETRY_DELAY_MS = 800;
+
 /**
  * Gemini generateContent 的共用呼叫封裝，回傳解析後的 JSON（依 schema），失敗回傳 null。
  * 呼叫端自己決定失敗時的退路——這裡不 throw，因為 AI 這塊都是「錦上添花」，
  * 不能讓 Gemini 的額度/網路問題擋掉整個搜尋。
+ *
+ * 實測過一次分類判斷（classifyAndTierResults_）因為單次呼叫的暫時性網路/額度問題失敗，
+ * 導致整批結果退回「全部當作直接相關」、雜訊沒被濾掉——這種偶發失敗重試一次通常就過了，
+ * 所以這裡跟前端 fetchJsonWithRetry 一樣加上重試，不能讓單次network hiccup 就讓使用者
+ * 看到一坨沒分類過的原始結果。
  */
 function callGemini_(prompt, schema) {
+  var config;
   try {
-    var config = getGeminiConfig_();
-    var url = GEMINI_BASE + '/' + config.model + ':generateContent?key=' + encodeURIComponent(config.apiKey);
-    var payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-      },
-    };
-    var response = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-    });
-    var code = response.getResponseCode();
-    var body = response.getContentText();
-    if (code !== 200) {
-      Logger.log('Gemini API 錯誤（HTTP ' + code + '）：' + body.slice(0, 500));
-      return null;
-    }
-    var json = JSON.parse(body);
-    var text = json.candidates && json.candidates[0] && json.candidates[0].content &&
-      json.candidates[0].content.parts && json.candidates[0].content.parts[0] &&
-      json.candidates[0].content.parts[0].text;
-    if (!text) {
-      Logger.log('Gemini 回應沒有內容：' + body.slice(0, 500));
-      return null;
-    }
-    return JSON.parse(text);
+    config = getGeminiConfig_();
   } catch (e) {
-    Logger.log('callGemini_ 失敗：' + e.message);
+    Logger.log('callGemini_ 設定錯誤：' + e.message);
     return null;
   }
+  var url = GEMINI_BASE + '/' + config.model + ':generateContent?key=' + encodeURIComponent(config.apiKey);
+  var payload = {
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: schema,
+      maxOutputTokens: 8192,
+    },
+  };
+
+  var lastError = '';
+  for (var attempt = 1; attempt <= GEMINI_CALL_ATTEMPTS; attempt++) {
+    try {
+      var response = UrlFetchApp.fetch(url, {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true,
+      });
+      var code = response.getResponseCode();
+      var body = response.getContentText();
+      if (code !== 200) {
+        lastError = 'HTTP ' + code + '：' + body.slice(0, 300);
+      } else {
+        var json = JSON.parse(body);
+        var candidate = json.candidates && json.candidates[0];
+        var text = candidate && candidate.content && candidate.content.parts &&
+          candidate.content.parts[0] && candidate.content.parts[0].text;
+        if (!text) {
+          lastError = '回應沒有內容（finishReason=' + (candidate && candidate.finishReason) + '）：' + body.slice(0, 300);
+        } else {
+          return JSON.parse(text);
+        }
+      }
+    } catch (e) {
+      lastError = e.message;
+    }
+    if (attempt < GEMINI_CALL_ATTEMPTS) Utilities.sleep(GEMINI_RETRY_DELAY_MS);
+  }
+  Logger.log('callGemini_ 重試 ' + GEMINI_CALL_ATTEMPTS + ' 次都失敗：' + lastError);
+  return null;
 }
 
 /**
