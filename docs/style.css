@@ -167,6 +167,13 @@ body {
   text-align: center;
 }
 
+.result-list li.loading {
+  color: var(--muted);
+  border-style: dashed;
+  justify-content: center;
+  font-style: italic;
+}
+
 .tier-block {
   margin-top: 14px;
 }

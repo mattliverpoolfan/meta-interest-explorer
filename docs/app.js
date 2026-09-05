@@ -131,10 +131,10 @@ async function runUnifiedSearch() {
   stopOverlapPolling_();
   statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證 + 關聯性複查，會需要幾秒）…';
   statusEl.classList.remove('error');
-  renderResultList(el('direct-results'), []);
-  renderResultList(el('indirect-high'), []);
-  renderResultList(el('indirect-medium'), []);
-  renderResultList(el('indirect-speculative'), []);
+  renderLoadingPlaceholder(el('direct-results'));
+  renderLoadingPlaceholder(el('indirect-high'));
+  renderLoadingPlaceholder(el('indirect-medium'));
+  renderLoadingPlaceholder(el('indirect-speculative'));
   el('overlap-scan-progress').textContent = '';
   renderOverlapScanResults([]);
 
@@ -157,6 +157,12 @@ async function runUnifiedSearch() {
     statusEl.textContent = '錯誤：' + e.message;
     statusEl.classList.add('error');
   }
+}
+
+// 搜尋還在跑的時候不能顯示「沒有結果」——那個文案的意思是「查完了、真的沒有」，
+// 跟「還在查」是兩件事，搞混會讓使用者誤以為查無資料，跟上面的搜尋中狀態文字對不起來。
+function renderLoadingPlaceholder(listEl) {
+  listEl.innerHTML = '<li class="loading">搜尋中…</li>';
 }
 
 // 直接相關查無結果不是「壞掉」，是「這個字詞在 Meta 後台沒有直接對應的標籤」——
