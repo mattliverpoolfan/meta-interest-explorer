@@ -76,12 +76,18 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 `GEMINI_API_KEY` 免費方案的額度限制是**每個模型分開算，每天 20 次**（`quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier`），不同模型的額度互相獨立（例如 Flash Lite 系列可以到 500 RPD）。`GeminiClient.gs` 的容錯邏輯：
 
-- `GEMINI_MODEL_PRIORITY`：模型清單依智慧程度排序（Pro > Flash > Flash Lite，數字越大越新）。**這個排序是照 Google 命名慣例推測的，沒有逐一實測驗證過**，如果發現排序不合理，直接調整陣列順序即可，不用動其他程式碼。
+- `GEMINI_MODEL_PRIORITY`：模型清單依智慧程度排序（Pro > Flash > Flash Lite，數字越大越新）。
 - `getGeminiApiKeys_()`：讀取所有已設定的 `GEMINI_API_KEY*` 屬性。
 - `callGemini_()`：雙層迴圈，外層跑模型優先序、內層跑所有金鑰——**確保兩支金鑰的最強模型都試過，才會降級用次強模型**（模型優先、金鑰其次）。
 - `callGeminiOnce_()`：單一模型+金鑰組合的呼叫。命中 HTTP 429 直接放棄不重試（Google 實際要求的重試間隔是幾十秒起跳，內部原本幾百毫秒的重試沒有意義還浪費額度）；其他錯誤才走原本的重試邏輯。
 
-這只是緩解，沒有根治——真正解法是使用者自己去 [Google AI Studio](https://aistudio.google.com/apikey) 把金鑰所在專案升級成付費方案（這種用量一天大概幾毛錢），或至少把 `GEMINI_API_KEY_2` 的佔位值換成真的第二把金鑰。
+**2026-09-08 修正：`GEMINI_MODEL_PRIORITY` 舊清單有一半根本打不通。** 使用者反應「額度消耗特別快」，用暫時的除錯端點直接測每一組模型+金鑰（bypass `callGemini_` 的 fallback 邏輯，一組一組單獨打）才發現：舊清單 6 個模型裡，`gemini-3.1-pro`、`gemini-3-flash` 是照命名慣例猜的，**根本不存在**（打下去 404）；`gemini-2.5-pro` 雖然在 `ListModels` 列得出來，但這把金鑰打下去也是 404「不再開放給新用戶」。等於每次呼叫都要先白白浪費兩次（每個死模型的請求還會照 `GEMINI_CALL_ATTEMPTS` 重試一次）注定失敗的請求，才會走到真正能用的模型——這正是「額度消耗快」+「搜尋常要等 40~130 秒」的主因之一：能真正分攤負載的模型其實只有原本清單的一半（`gemini-2.5-flash`／`gemini-3.1-flash-lite`／`gemini-2.5-flash-lite` 這三個是真的）。
+
+現在的清單改成用同一把金鑰實測過（先打 `GET /v1beta/models` 拿真實清單，再逐一 `generateContent` 探測）、**確認會回 200** 的模型名字：`gemini-pro-latest`、`gemini-3-flash-preview`、`gemini-flash-latest`、`gemini-3.5-flash`、`gemini-3.1-flash-lite-preview`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`、`gemini-flash-lite-latest`、`gemini-2.5-flash`、`gemini-2.5-flash-lite`——同一次測試裡有 8~9 個回 200（只有 `gemini-pro-latest` 因為免費方案本來就沒額度、回 429 是預期中的）。`gemini-*-latest` 是 Google 提供的別名，會自動指向該層級目前最新的正式模型，以後 Google 換版本不用回來改清單，但**這幾個別名底層實際對應到哪個模型、額度是不是跟旁邊列出的具體模型共用同一個配額桶，沒有進一步驗證過**——如果之後發現某個別名總是跟緊接在它旁邊的具體模型同時 429，很可能是共用同一桶，可以考慮拿掉其中一個。
+
+**如果之後 Google 又出新模型或改了命名，不要再憑猜的加進 `GEMINI_MODEL_PRIORITY`**——照上面的方法（暫時加一個 debug 端點直接測，見「已知的環境/工具怪癖」最後一條）先確認真的能用再加，猜錯的名字看起來像多一層保險，實際上只是每次都白白拖慢速度。
+
+真正的治本方法還是使用者自己去 [Google AI Studio](https://aistudio.google.com/apikey) 把金鑰所在專案升級成付費方案（這種用量一天大概幾毛錢），或至少把 `GEMINI_API_KEY_2` 的佔位值換成真的第二把金鑰——模型清單修好只是讓「同樣的免費額度」不再有一半被浪費在打不通的死模型上，不是讓總額度變多。
 
 ### AI 分類的機率性誤差（已知限制，不是 bug）
 
@@ -116,7 +122,7 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 1. **候選池上限與批次大小**（`UnifiedSearch.gs` 的 `OVERLAP_CANDIDATE_POOL_LIMIT`、`Overlap.gs` 的 `OVERLAP_SCAN_BATCH_SIZE`）目前是保守值（40 筆候選池、每批 6 筆、約 5~7 分鐘跑完一次第三類掃描），還沒實測 Meta `delivery_estimate` 真正的限速上限，調大之前建議先測。
 2. **`OverlapCache` 舊資料清理**：修正 `overlap_ratio` 超過 100% 的 bug 之前，快取裡可能還留著髒值，目前沒有自動化清理，需要的話手動去該分頁清。
-3. **Gemini 額度**：已加上模型 × 金鑰容錯鏈，但 (a) `GEMINI_API_KEY_2` 還是佔位值，需要使用者換成真的金鑰；(b) `GEMINI_MODEL_PRIORITY` 的排序沒有逐一實測驗證過；(c) 長期看還是建議評估開通付費額度。
+3. **Gemini 額度**：已加上模型 × 金鑰容錯鏈，`GEMINI_MODEL_PRIORITY` 也已經逐一實測過真的能用（見上面 2026-09-08 那次修正），但 (a) `GEMINI_API_KEY_2` 還是佔位值，需要使用者換成真的金鑰——這是目前唯一還沒解決、真正會限制總額度的部分；(b) 長期看還是建議評估開通付費額度；(c) `gemini-*-latest` 別名跟清單裡其他具體模型是否共用配額桶沒驗證過，之後如果懷疑，可以用同樣的暫時 debug 端點手法直接測。
 4. **AI 分類邊界的機率性誤差**：見上面「已知限制」，如果之後常態性出現分類錯誤，可以加更多 few-shot 案例或考慮換模型。
 5. **第三類重疊掃描是全域單一狀態**（`OVERLAP_SCAN_STATE`，`Overlap.gs`）：兩個人同時搜尋，後發起的會蓋掉前一個的進度。小範圍分享這個取捨可以接受，但擴大使用規模前要重新設計（例如帶 session id）。
 6. **`closeness` 分數的品質沒有大量驗證過**：目前只用「慢跑鞋」「童顏針」這幾個詞測過，AI 打分是否真的穩定拉開差距（而不是每筆都給差不多的分數），還需要更多實測案例觀察。
