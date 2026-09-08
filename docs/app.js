@@ -198,10 +198,18 @@ function stopOverlapPolling_() {
   }
 }
 
+// 單次查詢內部已經重試 RETRY_ATTEMPTS 次（見 fetchJsonWithRetry），這裡的 consecutiveFailures
+// 是「跨輪詢」的重試——Apps Script 端的間歇性問題通常幾分鐘內會自己恢復，一次查詢失敗
+// 不代表整個掃描死了（後端的批次觸發器仍在背景繼續跑），不能就此放棄輪詢、把使用者晾在
+// 一個永久不會再更新的錯誤訊息前面，得繼續每隔 OVERLAP_POLL_INTERVAL_MS 重新問一次狀態。
+const OVERLAP_POLL_MAX_CONSECUTIVE_FAILURES = 20;
+
 function pollOverlapScan(scanId) {
+  let consecutiveFailures = 0;
   const tick = async () => {
     try {
       const status = await apiGet('overlapScanStatus', { scanId });
+      consecutiveFailures = 0;
       if (status.replaced) {
         el('overlap-scan-progress').textContent = '這個比對已經被之後的新搜尋取代，這次搜尋就不會有第三類結果了';
         return;
@@ -214,7 +222,13 @@ function pollOverlapScan(scanId) {
         el('overlap-scan-progress').textContent = `以「${status.seedName}」為種子，比對完成（共 ${status.total} 筆）`;
       }
     } catch (e) {
-      el('overlap-scan-progress').textContent = '比對進度查詢失敗：' + e.message;
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= OVERLAP_POLL_MAX_CONSECUTIVE_FAILURES) {
+        el('overlap-scan-progress').textContent = '比對進度查詢連續失敗次數過多，已停止自動更新：' + e.message + '（可重新搜尋一次）';
+        return;
+      }
+      el('overlap-scan-progress').textContent = `比對進度查詢暫時失敗（將自動重試，第 ${consecutiveFailures} 次）：${e.message}`;
+      state.overlapPollTimer = setTimeout(tick, OVERLAP_POLL_INTERVAL_MS);
     }
   };
   tick();
