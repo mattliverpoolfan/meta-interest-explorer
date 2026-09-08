@@ -20,7 +20,7 @@
 
 ## 哪個 repo 對應哪個用途（2026-09-05 起兩個 repo 並存）
 
-- **Public repo**（`https://github.com/mattliverpoolfan/meta-interest-explorer`，[live 前端](https://mattliverpoolfan.github.io/meta-interest-explorer/)）：GitHub Pages 靠這個 repo 是 public 才能免費跑（private repo 要 GitHub Pro/Team/Enterprise 才能開 Pages）。**先維持原樣、不要再往這裡 push**，除非之後確認要不要繼續同步。
+- **Public repo**（`https://github.com/mattliverpoolfan/meta-interest-explorer`，[live 前端](https://mattliverpoolfan.github.io/meta-interest-explorer/)）：GitHub Pages 靠這個 repo 是 public 才能免費跑（private repo 要 GitHub Pro/Team/Enterprise 才能開 Pages）。**實際運作的規則（2026-09-08 起）**：真的會影響線上工具的修正（bug fix、前端行為改動）兩邊都要推，不能只留在私有 repo——不然使用者看到的 live 網站就一直是壞的。只有內部維運/文件性質的東西（像這份 `CLAUDE.md` 本身、`.gitignore` 這類）才只留在私有 repo，不用推去 public。
 - **這個私有 repo**：接續開發用，方便在 M1 伺服器上 `git clone` 下來繼續改。因為是私有的，可以把完整維運脈絡（帳戶 ID、部署細節、踩過的坑）直接寫進這份 `CLAUDE.md`，不用像以前那樣另外開一份不進 git 的 `HANDOFF.md`。
 - 兩邊目前是同一份 git 歷史分岔出去的（不是全新的 repo），程式碼實質相同，只是這個私有 repo 之後會繼續往前走，public repo 停在遷移當下的版本。**如果之後私有 repo 這邊改了後端 `apps-script/*.gs` 的邏輯，別忘了同一套 `clasp push`/`clasp deploy` 流程仍然是對著同一個 Apps Script 專案生效**——這兩個 git repo 只是原始碼的存放位置，跟 Apps Script 專案／Google Sheets 資料庫是分開的東西，不會因為換了 git remote 就換了後端。
 
@@ -56,9 +56,17 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 驗證通過的候選詞，**不是**用「這個詞原本被 AI 歸在 direct 還是 indirect」來決定它最後顯示在哪一類——那樣容易誤殺（例如「SPA」搜出「度假村」，字面上像雜訊但其實是合理結果）。而是把所有驗證通過的真實 Meta 標籤丟進 `classifyAndTierResults_`（`GeminiClient.gs`）統一重新判斷該進 direct / indirect（含分級：高/中/推測性）/ unrelated，只有 `unrelated` 會被丟棄，其餘都會顯示出來、只是分到不同類別——**目標是不誤殺任何真實存在的合理結果，寧可分類分錯也不要憑空消失**。
 
-### 種子標籤選擇：優先受眾規模最小的，不是「第一筆」
+### 種子標籤選擇（2026-09-08 改版）：AI 判斷語意最接近的，不是規模最小的
 
-`pickSeed_`（`UnifiedSearch.gs`）：直接相關裡跟原字詞完全同名的優先當種子；沒有精準對應時，**不能**選「清單第一筆」——這樣容易選到 Meta 分類樹最上層的籠統大分類（例如「健身和保健（健身）」，全球受眾 10 億+）。這種大分類拿去跟自己的子分類配對算重疊，Meta `delivery_estimate` 會直接回傳兩邊受眾都是 0（已用 `estimateOverlap` 實測證實：父分類 vs 自己子分類的組合，Meta 判定為冗餘/無效定向）。改成挑直接相關裡「受眾規模最小」的當種子，越具體越小眾的標籤，越不可能是別人的父分類，也是比對重疊時真正有意義的錨點。
+`pickSeed_`（`UnifiedSearch.gs`）：直接相關裡跟原字詞完全同名的優先當種子（`reason: '與搜尋詞完全相符'`）。
+
+沒有精準對應時，**選 AI 判斷「語意上跟原字詞最接近」的那一筆**——`classifyAndTierResults_`（`GeminiClient.gs`）在判斷 bucket/tier 的同時，也會替每個 `direct` 分類的項目打一個 0~100 的 `closeness` 分數（衡量「這個標籤是不是本尊本身」，而不是同領域的其他子類別/品牌），`pickSeed_` 挑 `closeness` 最高的那個。例如搜「慢跑鞋」查無此標籤本身時，會挑「慢跑」（幾乎同義的活動）而不是「跑步機」（同領域但明顯是別的東西）。
+
+**這是第二版設計，第一版（挑「受眾規模最小」的）已廢棄**：早期以為「規模小 = 具體 = 有意義的錨點」，但規模小跟語意接近沒有必然關係，實測時就出現過搜「慢跑鞋」挑到「阿姆斯特丹馬拉松」這種語意上很偏門、但剛好受眾規模最小的標籤當種子，比對出來的重疊結果自然沒有參考價值。第一版的動機（避免挑到「健身和保健（健身）」這種籠統大分類）用 closeness 排序也能自然避開，因為大分類的 closeness 通常會被 AI 判得比較低（它是「同領域但不是本尊」的典型情況）。
+
+只有在完全沒有 `closeness` 資料時（理論上只會發生在 AI 分類整個失敗、退回保守 fallback 的情況——那種情況下 `directResults` 通常已經只剩下精準同名這一筆，走不到這裡）才退回舊的「受眾規模最小」heuristic 當最後防線。
+
+`pickSeed_` 回傳 `{item, reason}`，`reason` 會透過 `startOverlapScan_`/`getOverlapScanStatus_`（`Overlap.gs`）的 `seedReason` 欄位一路傳到前端，`docs/app.js` 的 `renderSeedInfo_()` 顯示在③受眾重疊比對區塊一個**不會被輪詢進度或錯誤訊息蓋掉的固定位置**（`#overlap-seed-info`）——種子選誰，常常就是比對結果落差的原因，所以特別交代清楚。
 
 ### `lift` 指標 vs `overlap_ratio`
 
@@ -79,12 +87,24 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 `classifyAndTierResults_` 的 prompt 已經補強兩輪（抽象規則 + 具體案例，例：Hyrox 這種混合健身競賽該判「CrossFit Training/高強度間歇訓練」為 direct、「露營/園藝/旅遊創作者」為 indirect），實測「CrossFit」效果很好，但同一 prompt 重測「Hyrox」偶爾還是會把同領域外的項目誤判成 direct——**這是 AI 分類本身固有的機率性誤差，不會是 100% 穩定**，如果之後常常反應這個問題，可以考慮加更多案例或換更強的模型。
 
+### classifyAndTierResults_ 整個失敗時的退化行為（2026-09-08 修正）
+
+實測「童顏針」（一個 Meta 標籤庫沒有直接對應標籤的醫美詞彙）時，直接相關混進「蒂芙尼公司（精品）」「戲劇演員」「職業高爾夫球手」這類完全不相關的雜訊，而且被標成「高關聯度」的間接相關。**用暫時的除錯端點（`debugUnifiedClassify_`，已排查完刪除，做法見下面「已知的環境/工具怪癖」最後一條）直接比對輸入輸出，證實不是分類判斷錯誤，是 `classifyAndTierResults_` 整個 Gemini 呼叫失敗（額度用完），命中了舊版的 fallback：把候選詞清單全部標成 `bucket='direct'`**（也就是把 Meta 對查無精準匹配字詞補位回來的熱門雜訊，原封不動當「直接相關」端出來），這比不顯示還糟糕。
+
+**修法**：
+- fallback 改成保守退回——只有跟搜尋詞完全同名的那筆留著當 direct，其餘全部標成 `unrelated`（排除），每筆都標記 `aiFailed: true`。
+- `handleUnifiedSearch_`（`UnifiedSearch.gs`）偵測到 `aiFailed` 時，在回傳結果裡加一個 `aiClassificationFailed: true` 欄位。
+- 前端（`docs/app.js` 的 `showAiDegradedWarning_()`）看到這個欄位會顯示一個明確的黃色警告橫幅，講清楚「AI 關聯性複查暫時無法使用（很可能是額度用完），這次的直接相關只保留完全同名的結果、間接相關這次沒有輸出」——**不能讓退化結果看起來像正常結果**，這是這次修正最重要的原則。
+
+這個修正只是讓「額度用完」這個已知問題**表現得誠實**（清楚告訴使用者發生了什麼、不要展示誤導性的雜訊），沒有解決額度問題本身——治本還是要看上面「Gemini 免費額度」那一節，換真的第二把金鑰或開通付費額度。
+
 ## 已知的環境/工具怪癖
 
 - **Apps Script 編輯器的下拉選單常常要點兩次**：第一次點擊經常只是把選單「叫出來」但沒有真的選中項目，第二次點同一個座標才會生效。UI 沒反應先截圖確認選單是否真的開著。
 - **Apps Script 頂端工具列的函式下拉選單只顯示目前開啟中的檔案裡的函式**，不是專案全部函式。要跑某個函式，得先點開該函式所在的檔案。
 - **Google Sheets 的自動化打字（模擬鍵盤 `type`）連續打很多行會不可預期漏字**：可靠做法是先用公式一次性展開，再整個範圍複製、貼上「僅貼上值」轉成純值。
 - **持續（不是偶發）404**：曾經整個部署本身壞掉（後端執行紀錄顯示正常跑完，但 `/exec` 一直回 Google 自己的 404），直接建全新部署解決，不要浪費時間排查。
+- **懷疑後端某個資料處理環節出問題（例如懷疑分類/AI 判斷跟預期不符）時，Apps Script 網頁介面的「執行記錄」很難用**（點進去要點很多次、常常點不開詳細 log）。比較快的做法：暫時在 `Code.gs` 的 `doGet` 加一個 debug action（例如 `debugXxx`），直接把中間步驟的原始資料原封不動用 `jsonOutput_` 吐回來，用 `curl` 直接打就能肉眼比對——**排查完一定要把暫時加的 debug action 和對應函式刪乾淨，用 `git diff`／`git status` 確認乾淨後才 commit**，不要留在正式版本裡。
 
 ## 部署與代碼交付原則
 
@@ -99,6 +119,8 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 3. **Gemini 額度**：已加上模型 × 金鑰容錯鏈，但 (a) `GEMINI_API_KEY_2` 還是佔位值，需要使用者換成真的金鑰；(b) `GEMINI_MODEL_PRIORITY` 的排序沒有逐一實測驗證過；(c) 長期看還是建議評估開通付費額度。
 4. **AI 分類邊界的機率性誤差**：見上面「已知限制」，如果之後常態性出現分類錯誤，可以加更多 few-shot 案例或考慮換模型。
 5. **第三類重疊掃描是全域單一狀態**（`OVERLAP_SCAN_STATE`，`Overlap.gs`）：兩個人同時搜尋，後發起的會蓋掉前一個的進度。小範圍分享這個取捨可以接受，但擴大使用規模前要重新設計（例如帶 session id）。
+6. **`closeness` 分數的品質沒有大量驗證過**：目前只用「慢跑鞋」「童顏針」這幾個詞測過，AI 打分是否真的穩定拉開差距（而不是每筆都給差不多的分數），還需要更多實測案例觀察。
+7. **AI 分類整個失敗時，間接相關（②）目前是直接沒有輸出**（因為 fallback 只處理了 direct/unrelated 的判斷，沒有嘗試從候選詞來源猜間接相關）——這是刻意選擇「保守但誠實」而不是「生成更多但可能有雜訊的猜測」，如果之後覺得使用者體驗上更想要「有猜測總比沒有好」，可以重新考慮這個取捨。
 
 ## 相關文件
 
