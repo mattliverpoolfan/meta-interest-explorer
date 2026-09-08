@@ -283,3 +283,25 @@ button:disabled {
 .status.error {
   color: var(--danger);
 }
+
+.status.warning {
+  color: var(--tier-medium);
+  background: #fff7ed;
+  border: 1px solid var(--tier-medium);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 8px;
+}
+
+.seed-info {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent-weak);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 8px;
+}
+
+.seed-info:empty {
+  display: none;
+}

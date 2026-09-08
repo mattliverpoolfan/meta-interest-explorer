@@ -31,15 +31,19 @@ function handleUnifiedSearch_(query) {
     return { term: e.term, name: e.item.name };
   }));
 
+  var aiClassificationFailed = classifications.length > 0 && classifications.every(function (c) { return c.aiFailed; });
+
   var directResults = [];
   var indirectByTier = { 1: [], 2: [], 3: [] };
   forClassify.forEach(function (entry, i) {
-    var c = classifications[i] || { bucket: 'direct', tier: 0 };
+    var c = classifications[i] || { bucket: 'direct', tier: 0, closeness: 0 };
     if (c.bucket === 'unrelated') return;
     if (c.bucket === 'indirect') {
       var tier = (c.tier === 1 || c.tier === 2 || c.tier === 3) ? c.tier : 2;
       indirectByTier[tier].push(entry.item);
     } else {
+      // closeness 掛在標籤物件上，只給 pickSeed_ 挑種子用，不是要顯示給使用者看的欄位。
+      entry.item.closeness = (typeof c.closeness === 'number') ? c.closeness : null;
       directResults.push(entry.item);
     }
   });
@@ -52,16 +56,21 @@ function handleUnifiedSearch_(query) {
   };
 
   var overlapScan = null;
-  var seed = pickSeed_(query, directResults);
-  if (seed) {
+  var picked = pickSeed_(query, directResults);
+  if (picked) {
     var allIndirectFlat = indirectResults.high.concat(indirectResults.medium, indirectResults.speculative);
-    var candidatePool = buildCandidatePool_(seed, directResults, allIndirectFlat);
+    var candidatePool = buildCandidatePool_(picked.item, directResults, allIndirectFlat);
     if (candidatePool.length) {
-      overlapScan = startOverlapScan_(seed, candidatePool);
+      overlapScan = startOverlapScan_(picked.item, candidatePool, picked.reason);
     }
   }
 
-  return { direct: directResults, indirect: indirectResults, overlapScan: overlapScan };
+  return {
+    direct: directResults,
+    indirect: indirectResults,
+    overlapScan: overlapScan,
+    aiClassificationFailed: aiClassificationFailed,
+  };
 }
 
 function dedupeStrings_(list) {
@@ -105,20 +114,34 @@ function verifyTermsAgainstMeta_(terms) {
 }
 
 /**
- * 種子：直接相關裡跟原始字詞完全同名的優先。
+ * 種子：直接相關裡跟原始字詞完全同名的優先——這種情況下拿使用者自己輸入的詞當種子最準確，
+ * 不需要任何猜測。
  *
- * 沒有精準對應時，不能只挑「清單第一筆」——實測證實這樣會挑到像「健身和保健（健身）」
- * 這種 Meta 分類樹最上層的籠統大分類。這種大分類拿去跟候選池裡「剛好是它自己子分類」
- * 的標籤算交集，Meta 的 delivery_estimate 常會直接報錯、我們的容錯機制把錯誤吞掉降級
- * 回傳 0，導致整批比對結果變成一堆無意義的 0%（唯一沒污染到的，只有候選池裡剛好不屬於
- * 它子樹的標籤）。改成挑直接相關裡「受眾規模最小」的——越具體、越小眾的標籤，才是比對
- * 重疊時有意義的錨點，也剛好天生避開「拿大分類當種子」這個問題，因為籠統大分類幾乎必然
- * 是同一群直接相關結果裡受眾最大的那個。
+ * 沒有精準對應時，改成挑 AI 判斷「跟原始搜尋詞語意最接近」的那一筆（見 GeminiClient.gs 的
+ * closeness 欄位，例如搜「慢跑鞋」查無此標籤時，closeness 最高的應該是「慢跑」這種幾乎同義
+ * 的活動本身，而不是「跑步機」這種同領域但明顯是別的東西的標籤）——不是用受眾規模來挑。
+ * 早期版本用過「受眾規模最小」的heuristic，問題是規模小不等於語意接近，兩者沒有必然關係，
+ * 也曾經誤打誤撞挑到不相關的冷門標籤當種子（見 CLAUDE.md「已知限制」）。
+ *
+ * 只有在完全沒有 closeness 資料時（理論上只會發生在 AI 分類這一步整個失敗、退回保守 fallback
+ * 的情況——那種情況下 directResults 通常只剩下精準同名這一筆，已經被上面的 exact 分支處理掉，
+ * 這裡走不到）才退回舊的「受眾規模最小」heuristic 當最後防線，不會完全沒有種子可選。
+ *
+ * 回傳 {item, reason}，reason 是給使用者看的一句話，說明這次為什麼挑這個當種子——選種子的
+ * 邏輯常常就是受眾重疊比對結果落差的原因，所以特別交代清楚，不要讓使用者猜。
  */
 function pickSeed_(query, directResults) {
   if (!directResults.length) return null;
   var exact = directResults.filter(function (item) { return item.name === query; });
-  if (exact.length) return exact[0];
+  if (exact.length) {
+    return { item: exact[0], reason: '與搜尋詞完全相符' };
+  }
+
+  var byCloseness = directResults.filter(function (item) { return typeof item.closeness === 'number'; });
+  if (byCloseness.length) {
+    byCloseness.sort(function (a, b) { return b.closeness - a.closeness; });
+    return { item: byCloseness[0], reason: '沒有完全同名的標籤，AI 判斷這是語意上最接近搜尋詞的直接相關標籤' };
+  }
 
   var bySize = directResults.map(function (item) {
     var lower = Number(item.audience_size_lower_bound) || 0;
@@ -127,7 +150,7 @@ function pickSeed_(query, directResults) {
     return { item: item, size: size > 0 ? size : Infinity };
   });
   bySize.sort(function (a, b) { return a.size - b.size; });
-  return bySize[0].item;
+  return { item: bySize[0].item, reason: 'AI 關聯性複查暫時無法使用，退回選受眾規模最小的直接相關標籤當種子' };
 }
 
 /**

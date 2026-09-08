@@ -131,15 +131,17 @@ async function runUnifiedSearch() {
   stopOverlapPolling_();
   statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證 + 關聯性複查，會需要幾秒）…';
   statusEl.classList.remove('error');
+  hideAiDegradedWarning_();
   renderLoadingPlaceholder(el('direct-results'));
   renderLoadingPlaceholder(el('indirect-high'));
   renderLoadingPlaceholder(el('indirect-medium'));
   renderLoadingPlaceholder(el('indirect-speculative'));
+  el('overlap-seed-info').textContent = '';
   el('overlap-scan-progress').textContent = '';
   renderOverlapScanResults([]);
 
   try {
-    const { direct, indirect, overlapScan } = await apiPost({ action: 'unifiedSearch', query: q });
+    const { direct, indirect, overlapScan, aiClassificationFailed } = await apiPost({ action: 'unifiedSearch', query: q });
     renderDirectResults(direct);
     renderResultList(el('indirect-high'), indirect.high);
     renderResultList(el('indirect-medium'), indirect.medium);
@@ -147,8 +149,13 @@ async function runUnifiedSearch() {
     const indirectTotal = indirect.high.length + indirect.medium.length + indirect.speculative.length;
     statusEl.textContent = `直接相關 ${direct.length} 筆、間接相關 ${indirectTotal} 筆`;
 
+    if (aiClassificationFailed) {
+      showAiDegradedWarning_();
+    }
+
     if (overlapScan) {
-      el('overlap-scan-progress').textContent = `以「${overlapScan.seedName}」為種子，比對中… 0/${overlapScan.total}`;
+      renderSeedInfo_(overlapScan.seedName, overlapScan.seedReason);
+      el('overlap-scan-progress').textContent = `比對中… 0/${overlapScan.total}`;
       pollOverlapScan(overlapScan.scanId);
     } else {
       el('overlap-scan-progress').textContent = '找不到可以當比對種子的直接相關標籤，這次搜尋沒有第三類結果';
@@ -157,6 +164,25 @@ async function runUnifiedSearch() {
     statusEl.textContent = '錯誤：' + e.message;
     statusEl.classList.add('error');
   }
+}
+
+// 種子是誰，常常就是受眾重疊比對結果落差的原因——獨立顯示在一個不會被輪詢進度/錯誤訊息
+// 蓋掉的固定位置，讓使用者隨時能看到這次比對是拿什麼標籤當基準。
+function renderSeedInfo_(seedName, seedReason) {
+  const reasonText = seedReason ? `（${seedReason}）` : '';
+  el('overlap-seed-info').textContent = `本次以「${seedName}」為受眾重疊比對的種子${reasonText}`;
+}
+
+function showAiDegradedWarning_() {
+  const w = el('ai-degraded-warning');
+  w.textContent = '⚠️ AI 關聯性複查這一步暫時無法使用（很可能是 Gemini API 額度用完），下面的直接相關只保留了跟搜尋詞完全同名的結果，間接相關這次沒有輸出——不是資料庫沒有東西，過一陣子額度恢復後再查一次應該就會正常。';
+  w.hidden = false;
+}
+
+function hideAiDegradedWarning_() {
+  const w = el('ai-degraded-warning');
+  w.hidden = true;
+  w.textContent = '';
 }
 
 // 搜尋還在跑的時候不能顯示「沒有結果」——那個文案的意思是「查完了、真的沒有」，
@@ -214,12 +240,13 @@ function pollOverlapScan(scanId) {
         el('overlap-scan-progress').textContent = '這個比對已經被之後的新搜尋取代，這次搜尋就不會有第三類結果了';
         return;
       }
-      el('overlap-scan-progress').textContent = `以「${status.seedName}」為種子，比對中… ${status.done}/${status.total}`;
+      renderSeedInfo_(status.seedName, status.seedReason);
+      el('overlap-scan-progress').textContent = `比對中… ${status.done}/${status.total}`;
       renderOverlapScanResults(status.results);
       if (status.running) {
         state.overlapPollTimer = setTimeout(tick, OVERLAP_POLL_INTERVAL_MS);
       } else {
-        el('overlap-scan-progress').textContent = `以「${status.seedName}」為種子，比對完成（共 ${status.total} 筆）`;
+        el('overlap-scan-progress').textContent = `比對完成（共 ${status.total} 筆）`;
       }
     } catch (e) {
       consecutiveFailures += 1;

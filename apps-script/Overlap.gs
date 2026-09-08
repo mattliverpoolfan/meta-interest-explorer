@@ -111,11 +111,12 @@ function estimateOverlapForPairs_(pairs) {
 var OVERLAP_SCAN_BATCH_SIZE = 6;
 var OVERLAP_SCAN_STATE_KEY = 'OVERLAP_SCAN_STATE';
 
-function startOverlapScan_(seed, candidates) {
+function startOverlapScan_(seed, candidates, seedReason) {
   var state = {
     scanId: 'ovs_' + new Date().getTime(),
     seedId: seed.id,
     seedName: seed.name,
+    seedReason: seedReason || '',
     candidates: candidates.map(function (c) { return [c.id, c.name]; }),
     cursor: 0,
     results: [], // [id, name, overlap_ratio, lift]
@@ -125,6 +126,7 @@ function startOverlapScan_(seed, candidates) {
   return {
     scanId: state.scanId,
     seedName: state.seedName,
+    seedReason: state.seedReason,
     total: state.candidates.length,
     done: false,
     results: [],
@@ -192,6 +194,7 @@ function getOverlapScanStatus_(scanId) {
     done: state.results.length,
     total: state.candidates.length,
     seedName: state.seedName,
+    seedReason: state.seedReason || '',
     results: results,
   };
 }

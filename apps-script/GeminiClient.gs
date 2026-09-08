@@ -184,8 +184,9 @@ var CLASSIFY_RESPONSE_SCHEMA = {
         properties: {
           bucket: { type: 'STRING', enum: ['direct', 'indirect', 'unrelated'] },
           tier: { type: 'INTEGER' },
+          closeness: { type: 'INTEGER' },
         },
-        required: ['bucket', 'tier'],
+        required: ['bucket', 'tier', 'closeness'],
       },
     },
   },
@@ -208,9 +209,18 @@ var CLASSIFY_RESPONSE_SCHEMA = {
  * tier：只有 bucket='indirect' 時才有意義，1=高關聯度（邏輯清楚，適合優先測試）、
  * 2=中關聯度（合理但需要驗證）、3=推測性關聯（跳躍程度較大，適合大膽嘗試）；
  * bucket 不是 indirect 時填 0。
+ * closeness：只有 bucket='direct' 時才有意義（0~100），衡量這個標籤跟使用者原始搜尋詞
+ * 「本尊程度」的接近程度——100 分表示幾乎就是同一個東西（例如搜「慢跑鞋」查到「慢跑」這種
+ * 幾乎同義的活動本身），分數越低表示雖然還在同一個領域，但比較像是同領域裡的「其他子類別/
+ * 品牌/變化型」而不是使用者原本要找的那個東西本身。這個分數是拿來在沒有精準比對到的情況下，
+ * 挑一個「最接近原意」的標籤當受眾重疊比對的種子用，不是 direct 時填 0。
  *
- * 回傳跟 candidates 等長、順序一致的 {bucket, tier} 陣列；Gemini 失敗時全部退回
- * bucket='direct'——寧可退回沒有分類/分級的舊版體驗，也不能讓這步的失敗擋掉整個搜尋。
+ * 回傳跟 candidates 等長、順序一致的 {bucket, tier, closeness} 陣列。Gemini 完全失敗時
+ * （額度用完、網路問題等），**不能**照舊全部退回 bucket='direct'——那樣會把 Meta 對查無
+ * 精準匹配的字詞補位回來的不相關熱門標籤，全部當成「直接相關」顯示給使用者，比不顯示還糟。
+ * 保守退回：只有跟搜尋詞完全同名的那筆留著當 direct，其餘全部排除（unrelated），並且每筆都
+ * 標記 aiFailed=true，讓呼叫端知道這是「AI 分類暫時無法使用」的退化結果，可以在畫面上提醒
+ * 使用者，而不是靜靜地展示一批可能是雜訊的「直接相關」。
  */
 function classifyAndTierResults_(query, candidates) {
   if (!candidates.length) return [];
@@ -240,12 +250,24 @@ function classifyAndTierResults_(query, candidates) {
     '願意報名高強度競賽的人，通常也是熱愛自我挑戰、熱衷戶外生活的人，所以也會對露營這類戶外休閒感興趣——' +
     '這是受眾輪廓的間接推理，不是訓練方式的同領域延伸）。**判斷時只看這個候選標籤本身的性質，不要因為它' +
     '看起來也沾得上「戶外」「運動」這類寬泛字眼，就放寬標準判成 direct**。\n\n' +
-    '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"bucket": "...", "tier": 數字}' +
-    '（bucket 不是 indirect 時 tier 填 0）。';
+    'closeness（只有 bucket="direct" 時才填有意義的值，其餘填 0）：0~100 分，衡量這個標籤跟使用者原始' +
+    '搜尋詞「本尊程度」的接近程度——100 分表示幾乎就是同一個東西本身（例如搜「慢跑鞋」查到「慢跑」這種' +
+    '幾乎同義的活動；搜尋詞剛好完全同名的當然也是 100），分數越低表示雖然還在同一個領域，但比較像是' +
+    '「其他子類別/品牌/變化型」，不是使用者原本要找的那個東西本身（例如搜「慢跑鞋」查到「跑步機」——' +
+    '同樣是跑步領域的裝備，但跟「鞋子」本身的距離比「慢跑」這個動作要遠，closeness 該給比較低的分數）。' +
+    '這個分數是拿來在沒有精準比對到搜尋詞本身時，從 direct 裡面挑一個「最接近原意」的標籤當受眾重疊比對' +
+    '的種子錨點用，請務必依照真實的語意距離給分、拉開差距，不要每筆都給差不多的分數。\n\n' +
+    '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"bucket": "...", "tier": 數字, ' +
+    '"closeness": 數字}（bucket 不是 indirect 時 tier 填 0；bucket 不是 direct 時 closeness 填 0）。';
   var parsed = callGemini_(prompt, CLASSIFY_RESPONSE_SCHEMA);
   if (!parsed || !Array.isArray(parsed.results) || parsed.results.length !== candidates.length) {
-    Logger.log('classifyAndTierResults_ 回傳格式不對或失敗，退回全部視為 direct（沒有分類/分級）');
-    return candidates.map(function () { return { bucket: 'direct', tier: 0 }; });
+    Logger.log('classifyAndTierResults_ 回傳格式不對或失敗（可能是 Gemini 額度用完），保守退回：只留下跟' +
+      '搜尋詞完全同名的當 direct，其餘一律排除，避免把 Meta 補位的不相關雜訊誤標成直接相關顯示給使用者');
+    return candidates.map(function (c) {
+      return c.name === query
+        ? { bucket: 'direct', tier: 0, closeness: 100, aiFailed: true }
+        : { bucket: 'unrelated', tier: 0, closeness: 0, aiFailed: true };
+    });
   }
   return parsed.results;
 }
