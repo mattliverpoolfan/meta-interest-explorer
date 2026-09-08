@@ -20,19 +20,34 @@
 var GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
- * 依智慧程度由強到弱排序，最上面優先用。這份排序是照 Google 一貫的命名慣例
- * （Pro > Flash > Flash Lite；同系列世代數字越大越新）做的判斷，不是每個模型都
- * 實測驗證過相對能力——如果之後發現某個模型的免費額度或實際表現跟這裡排的不一樣，
- * 直接調整這個陣列順序即可，不用動其他程式碼。Pro 系列在免費方案通常沒有額度
- * （呼叫會直接失敗被跳過），但保留在清單最前面，之後帳戶升級成付費方案就會自動
- * 優先用到，不用再回來改程式碼。
+ * 依智慧程度由強到弱排序，最上面優先用。
+ *
+ * 2026-09-08 修正：舊清單裡的 `gemini-3.1-pro`、`gemini-3-flash` 是憑 Google 命名慣例猜的，
+ * 用暫時的除錯端點直接打 ListModels + 逐一實測 generateContent 後發現**根本不存在**（打
+ * 下去直接 404），`gemini-2.5-pro` 雖然在 ListModels 裡列得出來，但這把金鑰打下去也是
+ * 404「不再開放給新用戶」。等於舊清單 6 個裡有 3 個是完全打不通的死路——每次呼叫都要先
+ * 白白浪費兩次（每個死模型還會重試一次）注定失敗的請求，才會走到真正能用的模型，這正是
+ * 搜尋常常要等 40~130 秒、而且額度感覺消耗特別快的主因之一（能真正分攤額度的模型其實只有
+ * 原本清單的一半）。
+ *
+ * 下面這份改成實測過 ListModels + 逐一 generateContent 探測、**真的會回 200** 的模型名字
+ * （用同一把金鑰測的）。`gemini-*-latest` 這幾個是 Google 提供的別名，會自動指向該層級
+ * 目前最新的正式模型，好處是以後 Google 換版本不用回來改這個清單；**但這幾個別名底層實際
+ * 對應到哪個模型、額度是不是跟其他清單裡的模型共用同一個配額桶，沒有進一步驗證過**，如果
+ * 之後發現某個別名總是跟緊接在它旁邊的具體模型同時 429，很可能就是共用同一桶，可以考慮拿掉
+ * 其中一個。Pro 系列（`gemini-pro-latest`）目前免費額度是 0（打下去直接 429），保留在清單
+ * 最前面，帳戶之後升級付費方案會自動優先用到。
  */
 var GEMINI_MODEL_PRIORITY = [
-  'gemini-3.1-pro',
-  'gemini-2.5-pro',
-  'gemini-3-flash',
-  'gemini-2.5-flash',
+  'gemini-pro-latest',
+  'gemini-3-flash-preview',
+  'gemini-flash-latest',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite-preview',
+  'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
+  'gemini-flash-lite-latest',
+  'gemini-2.5-flash',
   'gemini-2.5-flash-lite',
 ];
 
