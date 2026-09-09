@@ -24,7 +24,14 @@ function init() {
   }
 
   el('search-btn').addEventListener('click', runUnifiedSearch);
-  el('search-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') runUnifiedSearch(); });
+  // 中日韓輸入法選字確認也會送出 Enter 鍵盤事件，isComposing（或舊版瀏覽器的
+  // keyCode 229）判斷「這個 Enter 是不是還在選字階段」，選字時的 Enter 一律忽略，
+  // 避免字都還沒選完就送出搜尋；真正打完字、輸入法已經收起來後按 Enter 才會搜尋。
+  el('search-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (e.isComposing || e.keyCode === 229) return;
+    runUnifiedSearch();
+  });
   el('manual-compare-btn').addEventListener('click', computeManualOverlap);
   initTabs();
 
