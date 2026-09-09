@@ -7,6 +7,7 @@ const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxsLaM_z7wYqkJPfAVa0
 const state = {
   apiKey: localStorage.getItem('apiKey') || '',
   overlapPollTimer: null,
+  searchInFlight: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -130,10 +131,20 @@ const OVERLAP_POLL_INTERVAL_MS = 3000;
 
 // 一次搜尋、三類結果同時呈現：直接相關/邏輯間接相關同步查完直接回傳，
 // 受眾重疊比對（第三類）另外交給後端非同步跑，這裡只負責啟動輪詢。
+//
+// 一次搜尋要打兩次 Gemini（聯想候選詞 + 分類分級），Gemini 免費方案除了每天的總量
+// 上限，還有「每分鐘」的上限（很多模型只有 2~5 次/分鐘）。單次搜尋常要等 40~130 秒，
+// 使用者等得不耐煩重複點搜尋按鈕、或連續換關鍵字查很正常，但這樣會讓好幾次搜尋的
+// Gemini 呼叫疊在同一分鐘內，即使當天的總額度還很充裕，也可能把好幾個模型的「每分鐘」
+// 上限同時打滿，看起來就像「AI 全部失敗」——實際上只要間隔開來個別查詢都會成功。
+// 這裡在還有搜尋跑在背景時，直接擋掉新的搜尋請求，避免多個搜尋疊加。
 async function runUnifiedSearch() {
   const q = el('search-input').value.trim();
   const statusEl = el('search-status');
   if (!q) return;
+  if (state.searchInFlight) return;
+  state.searchInFlight = true;
+  el('search-btn').disabled = true;
 
   stopOverlapPolling_();
   statusEl.textContent = '搜尋中（AI 聯想候選詞 + 逐一向 Meta 驗證 + 關聯性複查，會需要幾秒）…';
@@ -170,6 +181,9 @@ async function runUnifiedSearch() {
   } catch (e) {
     statusEl.textContent = '錯誤：' + e.message;
     statusEl.classList.add('error');
+  } finally {
+    state.searchInFlight = false;
+    el('search-btn').disabled = false;
   }
 }
 
