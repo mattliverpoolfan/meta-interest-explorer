@@ -43,7 +43,7 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 | `META_ACCESS_TOKEN` | Meta access token，需要 `ads_management` 權限 |
 | `META_AD_ACCOUNT_ID` | 目前指向的廣告帳戶 ID |
 | `APP_API_KEY` | 保護 `estimateOverlap`／`unifiedSearch`／`refreshSnapshot` 用的密碼。分享連結帶 `?key=該密碼`，`docs/app.js` 的 `init()` 自動存進 localStorage 並清掉網址列，之後開一般網址也能用 |
-| `GEMINI_API_KEY` / `GEMINI_API_KEY_2` | `GeminiClient.gs` 呼叫 Gemini API 用，兩支輪替（見下面「Gemini 額度」一節）。去 https://aistudio.google.com/apikey 申請。**`GEMINI_API_KEY_2` 目前的值是佔位字串 `PLACEHOLDER_REPLACE_ME`，還沒換成真的金鑰** |
+| `GEMINI_API_KEY` / `GEMINI_API_KEY_2` | `GeminiClient.gs` 呼叫 Gemini API 用，兩支輪替（見下面「Gemini 額度」一節）。去 https://aistudio.google.com/apikey 申請。**2026-09-09：`GEMINI_API_KEY_2` 已經換成真的金鑰並實測過會回 200**（用暫時的除錯端點直接測，不是只看格式猜），兩支金鑰現在都在真的輪替 |
 | `TOTAL_POPULATION_ESTIMATE` | 不是手動填的，`getTotalPopulationEstimate_()`（`Overlap.gs`）第一次用到時自己算好存起來當快取，算 lift 指標的標準化基準 |
 
 ## 核心邏輯與設計決策
@@ -87,7 +87,7 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 **如果之後 Google 又出新模型或改了命名，不要再憑猜的加進 `GEMINI_MODEL_PRIORITY`**——照上面的方法（暫時加一個 debug 端點直接測，見「已知的環境/工具怪癖」最後一條）先確認真的能用再加，猜錯的名字看起來像多一層保險，實際上只是每次都白白拖慢速度。
 
-真正的治本方法還是使用者自己去 [Google AI Studio](https://aistudio.google.com/apikey) 把金鑰所在專案升級成付費方案（這種用量一天大概幾毛錢），或至少把 `GEMINI_API_KEY_2` 的佔位值換成真的第二把金鑰——模型清單修好只是讓「同樣的免費額度」不再有一半被浪費在打不通的死模型上，不是讓總額度變多。
+真正的治本方法還是使用者自己去 [Google AI Studio](https://aistudio.google.com/apikey) 把金鑰所在專案升級成付費方案（這種用量一天大概幾毛錢）——`GEMINI_API_KEY_2` 已經換成真的金鑰（2026-09-09），模型清單修好加上兩把真的金鑰輪替，讓「同樣的免費額度」不再有一半被浪費在打不通的死模型上、也真的有兩桶額度可用，但長期用量大的話還是建議評估付費方案。
 
 ### AI 分類的機率性誤差（已知限制，不是 bug）
 
@@ -130,7 +130,7 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 
 1. **候選池上限與批次大小**（`UnifiedSearch.gs` 的 `OVERLAP_CANDIDATE_POOL_LIMIT`、`Overlap.gs` 的 `OVERLAP_SCAN_BATCH_SIZE`）目前是保守值（40 筆候選池、每批 6 筆、約 5~7 分鐘跑完一次第三類掃描），還沒實測 Meta `delivery_estimate` 真正的限速上限，調大之前建議先測。
 2. **`OverlapCache` 舊資料清理**：修正 `overlap_ratio` 超過 100% 的 bug 之前，快取裡可能還留著髒值，目前沒有自動化清理，需要的話手動去該分頁清。
-3. **Gemini 額度**：已加上模型 × 金鑰容錯鏈，`GEMINI_MODEL_PRIORITY` 也已經逐一實測過真的能用（見上面 2026-09-08 那次修正），但 (a) `GEMINI_API_KEY_2` 還是佔位值，需要使用者換成真的金鑰——這是目前唯一還沒解決、真正會限制總額度的部分；(b) 長期看還是建議評估開通付費額度；(c) `gemini-*-latest` 別名跟清單裡其他具體模型是否共用配額桶沒驗證過，之後如果懷疑，可以用同樣的暫時 debug 端點手法直接測。
+3. **Gemini 額度**：已加上模型 × 金鑰容錯鏈，`GEMINI_MODEL_PRIORITY` 也已經逐一實測過真的能用（見上面 2026-09-08 那次修正），`GEMINI_API_KEY_2` 也已經換成真的金鑰並實測過（2026-09-09）。剩下的：(a) 長期用量大的話還是建議評估開通付費額度；(b) `gemini-*-latest` 別名跟清單裡其他具體模型是否共用配額桶沒驗證過，之後如果懷疑，可以用同樣的暫時 debug 端點手法直接測。
 4. **AI 分類邊界的機率性誤差**：見上面「已知限制」，如果之後常態性出現分類錯誤，可以加更多 few-shot 案例或考慮換模型。
 5. **第三類重疊掃描是全域單一狀態**（`OVERLAP_SCAN_STATE`，`Overlap.gs`）：兩個人同時搜尋，後發起的會蓋掉前一個的進度。小範圍分享這個取捨可以接受，但擴大使用規模前要重新設計（例如帶 session id）。
 6. **`closeness` 分數的品質沒有大量驗證過**：目前只用「慢跑鞋」「童顏針」這幾個詞測過，AI 打分是否真的穩定拉開差距（而不是每筆都給差不多的分數），還需要更多實測案例觀察。
