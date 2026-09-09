@@ -15,6 +15,16 @@ var CLASSIFY_INPUT_LIMIT = 60;
 var OVERLAP_CANDIDATE_POOL_LIMIT = 40;
 var OVERLAP_CANDIDATE_RANDOM_SAMPLE = 30;
 
+/**
+ * 2026-09-09 實測抓到：像「投資」這種泛用詞，Meta 搜尋一次就補回 20 幾筆各種投資/
+ * 股票/基金子分類，同一次搜尋裡單一候選詞就佔滿 forClassify 六成以上的名額，把
+ * 「五星級飯店」「健康生活」這種當次查無精準匹配、Meta 沒補位任何結果的候選詞完全
+ * 擠出去——結果看起來像「AI 聯想很沒有想像力」，其實 AI 聯想的詞本身夠多元
+ * （精品／瑜珈／五星級飯店／高爾夫／投資／健康生活），問題是 Meta 端每個詞回補的
+ * 數量天差地遠。每個候選詞的驗證結果先各自砍到這個上限，確保不會有單一詞洗版。
+ */
+var MAX_VERIFIED_PER_TERM = 6;
+
 function handleUnifiedSearch_(query) {
   query = String(query || '').trim();
   if (!query) throw new Error('請輸入搜尋字詞');
@@ -100,7 +110,7 @@ function verifyTermsAgainstMeta_(terms) {
     try {
       var results = searchCachedInterests_(term);
       if (!results.length) results = searchAdInterest_(term, 20, true);
-      results.forEach(function (item) {
+      results.slice(0, MAX_VERIFIED_PER_TERM).forEach(function (item) {
         var id = String(item.id);
         if (seen[id]) return;
         seen[id] = true;
@@ -154,6 +164,24 @@ function pickSeed_(query, directResults) {
 }
 
 /**
+ * 2026-09-09 實測抓到：候選標籤自己的受眾規模如果本來就逼近或等於 0（Meta 對極小眾
+ * 標籤常常直接回傳 0，或是卡在 Meta 的最低回報門檻 1,000），拿去跟種子算交集，
+ * 算出來的 overlap_ratio／lift 要嘛是無意義的 0%／0，要嘛因為分母（候選詞自己的規模）
+ * 小到跟 Meta 回報下限一樣，交集剛好等於候選詞全部規模，數學上就是「100% 重疊、
+ * lift 高到誇張」——不是真的發現了驚人關聯，是小樣本雜訊。種子規模夠大時這個問題
+ * 特別明顯（種子受眾隨便都是幾十萬，任何規模只有 1,000 的候選詞幾乎必然「100% 落在
+ * 種子受眾裡」）。用 Interests 分頁/搜尋結果裡已經存的規模欄位先擋掉，不用另外多打
+ * API，也不會浪費第三類掃描的批次額度在這些注定沒有意義的 pair 上。
+ */
+var MIN_CANDIDATE_AUDIENCE_SIZE = 10000;
+
+function estimatedAudienceSize_(item) {
+  var lower = Number(item.audience_size_lower_bound) || 0;
+  var upper = Number(item.audience_size_upper_bound) || lower;
+  return (lower + upper) / 2;
+}
+
+/**
  * 候選池 = 直接相關（扣掉種子）+ 間接相關 + 從已知標籤庫隨機取樣一批，
  * 隨機取樣是刻意留給「使用者跟 AI 都想不到，但受眾真的重疊」的空間——這正是第三類存在的意義。
  */
@@ -165,6 +193,7 @@ function buildCandidatePool_(seed, directResults, indirectResults) {
   directResults.concat(indirectResults).forEach(function (item) {
     var id = String(item.id);
     if (seenIds[id]) return;
+    if (estimatedAudienceSize_(item) < MIN_CANDIDATE_AUDIENCE_SIZE) return;
     seenIds[id] = true;
     pool.push({ id: item.id, name: item.name });
   });
@@ -178,6 +207,7 @@ function buildCandidatePool_(seed, directResults, indirectResults) {
         var row = all[i];
         var id = String(row.id);
         if (!id || seenIds[id]) continue;
+        if (estimatedAudienceSize_(row) < MIN_CANDIDATE_AUDIENCE_SIZE) continue;
         seenIds[id] = true;
         pool.push({ id: row.id, name: row.name });
       }
