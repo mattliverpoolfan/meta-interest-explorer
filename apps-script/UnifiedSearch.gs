@@ -43,11 +43,20 @@ function handleUnifiedSearch_(query) {
 
   var aiClassificationFailed = classifications.length > 0 && classifications.every(function (c) { return c.aiFailed; });
 
+  // 2026-09-09 實測抓到：分類（第一二類）完全沒有拿到候選詞自己的受眾規模，AI 純粹憑
+  // 標籤名字的語意判斷該給哪一級。實測驗證過「瑜伽經」這個標籤在 Meta 上的真實受眾是
+  // 0（不是規模小，是根本查無可投放受眾），但 AI 完全不知道這件事，照樣照文字語意給了
+  // 一個看起來煞有介事的關聯等級——顯示出來的分級因此可能跟「這個標籤到底能不能真的拿
+  // 去投放」完全脫鉤，讓使用者誤以為這是個有意義的選項。跟種子/候選池的規模門檻用同一套
+  // 判斷邏輯，但這裡只擋真正「查無受眾」的（規模 0），不用第三類那麼嚴格的門檻——直接/
+  // 間接相關的目的是給真實存在、可投放的選項，只要受眾不是 0 就有參考價值，不需要像第三類
+  // 重疊比對那樣要求統計上有意義的規模。
   var directResults = [];
   var indirectByTier = { 1: [], 2: [], 3: [] };
   forClassify.forEach(function (entry, i) {
     var c = classifications[i] || { bucket: 'direct', tier: 0, closeness: 0 };
     if (c.bucket === 'unrelated') return;
+    if (estimatedAudienceSize_(entry.item) <= 0) return;
     if (c.bucket === 'indirect') {
       var tier = (c.tier === 1 || c.tier === 2 || c.tier === 3) ? c.tier : 2;
       indirectByTier[tier].push(entry.item);
