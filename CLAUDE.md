@@ -183,7 +183,12 @@ Apps Script 編輯器 → 部署（右上角，常常要點兩次選單才會真
 1. **止血**——`filterToInterestClass_` 直接搬進 `searchAdInterestSuggestion_`（`MetaClient.gs`）內部，跟 `searchAdInterest_` 用同一套過濾，一次修好 `expandRelatedSuggestions_` 跟 `handleSuggestRelated_`（`suggestRelated` API，目前前端沒在用，但技術上仍可直接呼叫）兩個呼叫點。因為上面那次調查已經證實這支 API 對這個帳號基本上等於失效（不管餵什麼都回差不多的雜訊 fallback），套用過濾後 `expandRelatedSuggestions_` 實務上會經常找不到任何真正的興趣可寫入——**這是預期中、也是正確的行為**：找不到就不寫，好過把雜訊寫進資料庫，跟這個工具一貫「寧可保守也不要誤導」的設計原則一致（見上面「AI 分類的機率性誤差」「classifyAndTierResults_ 整個失敗時的退化行為」)。
 2. **一次性清理**——用專案既有的暫時 debug 端點慣例（`debugCleanupPollutedInterests_` + `doGet` route，清完立刻刪乾淨，`git diff --stat` 確認 `Code.gs` 淨變化為零），把 Interests 分頁裡這 288 筆 `path[0] !== '興趣'` 的列整批移除，`Interests` 分頁從 2,563 筆變成 2,275 筆全部是真正的興趣。
 
-**沒有處理、之後可能要注意的**：`RelatedCache`／`OverlapCache` 這兩個分頁可能還留著引用已被清掉之 id 的舊快取內容（快取本身是過去 API 呼叫結果的快照，不會自動失效），這次沒有一併清理；如果之後發現快取結果裡出現已刪除的興趣，需要另外處理。
+**後續補做（2026-09-11 同日完成）**：`RelatedCache`／`OverlapCache` 這兩個分頁的快取清理也做了。用同一套暫時 debug 端點慣例查證：
+
+- `OverlapCache`（577 筆）：`interest_a`／`interest_b` 任一邊已不存在於清理後的 `Interests`（含一筆兩邊皆為空字串的畸形列）的，整列移除——**260 筆（45%）**，剩 317 筆。移除比例遠高於 Interests 本身的污染率（11.2%），因為第三類重疊比對常常把一個污染標籤當種子或候選詞，一個污染 id 會牽連到好幾個 pair。
+- `RelatedCache`（6 筆，`suggestRelated` API 過去零星被直接呼叫留下的快取）：只要 `related_json` 裡有任一筆不是「興趣」class 就整列移除——**結果 6 筆全部移除（100%）**，連種子是「咖啡」「Yoga」「Basketball」這種完全不相關/不敏感的主題也一樣全軍覆沒，這是獨立於前面模擬測試之外、來自真實歷史呼叫記錄的證據，進一步坐實「`adinterestsuggestion` 對這個帳號已經失效」不是測試環境的偶發現象。
+
+清理後 `OverlapCache` 317 筆、`RelatedCache` 0 筆，皆已確認乾淨。
 
 ## 已知的環境/工具怪癖
 
