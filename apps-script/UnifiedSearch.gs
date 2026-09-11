@@ -36,6 +36,21 @@ function handleUnifiedSearch_(query) {
   // 不能用「這個詞原本被 AI 歸在哪一類」來決定結果的分類，那正是誤殺/漏網的來源
   // （Meta 對查無精準匹配的字詞常補位不相關的熱門標籤，即使搜尋詞本身看似「直接」）。
   var verified = verifyTermsAgainstMeta_(allTerms);
+
+  // 2026-09-11 實測抓到：間接候選詞常常「邏輯推理是對的，字面用詞卻沒對上 Meta 標籤的
+  // 命名習慣」，導致整個推理方向因為單一措辭沒撞上而平白漏掉。針對第一輪完全查無結果的
+  // 間接候選詞，讓 AI 保留同一個推理方向、換幾種說法再試一次——只補救「用詞沒對上」，
+  // 不是重新聯想新方向。
+  var foundTerms = {};
+  verified.forEach(function (e) { foundTerms[e.term] = true; });
+  var failedIndirectTerms = (gemini.indirect || []).filter(function (t) { return !foundTerms[t]; });
+  if (failedIndirectTerms.length) {
+    var retryTerms = dedupeStrings_(regenerateFailedTerms_(query, failedIndirectTerms));
+    if (retryTerms.length) {
+      verified = dedupeVerifiedById_(verified.concat(verifyTermsAgainstMeta_(retryTerms)));
+    }
+  }
+
   var forClassify = verified.slice(0, CLASSIFY_INPUT_LIMIT);
   var classifications = classifyAndTierResults_(query, forClassify.map(function (e) {
     return { term: e.term, name: e.item.name };
@@ -100,6 +115,19 @@ function dedupeStrings_(list) {
     if (!t || seen[t]) return;
     seen[t] = true;
     out.push(t);
+  });
+  return out;
+}
+
+/** 合併多輪 verifyTermsAgainstMeta_ 的結果時，同一個標籤可能被不同輪的候選詞重複查到。 */
+function dedupeVerifiedById_(list) {
+  var seen = {};
+  var out = [];
+  list.forEach(function (e) {
+    var id = String(e.item.id);
+    if (seen[id]) return;
+    seen[id] = true;
+    out.push(e);
   });
   return out;
 }

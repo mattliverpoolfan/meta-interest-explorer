@@ -86,8 +86,12 @@ function buildCandidatePrompt_(query) {
     '這類——字面上跟嬰兒用品完全不相關，但這群人同時也在意這些事；又例如使用者輸入一個高強度競賽型運動賽事' +
     '（例如混合健身競賽），indirect 不該再給其他健身房或訓練方式（那是 direct），而該推理「願意花錢報名這種' +
     '競賽的人，還會是什麼樣的消費者」——例如運動穿戴裝置、運動營養補充品、其他強調挑戰性/自我突破的活動' +
-    '（越野跑、鐵人三項這類不同運動但同樣訴求自我挑戰的族群）、高消費力的生活風格指標。給 3~6 個詞，盡量' +
-    '涵蓋不同的延伸方向，不要每個詞都停留在同一個小圈子裡。\n\n' +
+    '（越野跑、鐵人三項這類不同運動但同樣訴求自我挑戰的族群）、高消費力的生活風格指標。給 8~12 個詞，' +
+    '**盡量橫跨至少 4~5 個完全不同的延伸角度**（例如：生活風格/嗜好、消費力/品味指標、人口統計輪廓' +
+    '（例如新手父母、退休族、通勤族這類身分標籤）、同時期會做的其他行為、價值觀/自我認同這類），每個角度' +
+    '給 1~3 個詞就好，不要為了湊數在同一個角度裡重複產生相似詞——寧可犧牲同一角度的深度，也要優先確保' +
+    '角度的廣度，因為候選詞之後還要靠字面去 Meta 搜尋框比對，角度越分散，越不容易因為單一措辭沒對上' +
+    '就整個角度掛零。\n\n' +
     '每個詞盡量精簡（2~6 個字），適合直接拿去 Meta 廣告後台的興趣搜尋框查詢，不要加任何說明文字。';
 }
 
@@ -187,6 +191,64 @@ function classifyInterestCandidates_(query) {
     direct: Array.isArray(parsed.direct) ? parsed.direct : [],
     indirect: Array.isArray(parsed.indirect) ? parsed.indirect : [],
   };
+}
+
+var RETRY_TERMS_RESPONSE_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    results: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          original: { type: 'STRING' },
+          alternatives: { type: 'ARRAY', items: { type: 'STRING' } },
+        },
+        required: ['original', 'alternatives'],
+      },
+    },
+  },
+  required: ['results'],
+};
+
+/**
+ * 2026-09-11 新增：間接候選詞常常「邏輯推理是對的，但字面用詞沒對上 Meta 標籤的命名習慣」，
+ * 導致 Meta 搜尋框查無結果、整個推理方向平白漏掉。這裡針對查無結果的間接候選詞，讓 AI
+ * **保留原本的推理方向、只換字面說法**再試一次，提高文字比對命中真實標籤的機率——
+ * 不是重新聯想新方向（那是 classifyInterestCandidates_ 的事），純粹是換句話說。
+ */
+function buildRetryPrompt_(query, failedTerms) {
+  return '你先前針對使用者搜尋「' + query + '」提出了幾個「邏輯上間接相關」的候選詞，但這些詞拿去 Meta ' +
+    '廣告後台的興趣標籤搜尋框查詢，完全沒有查到任何真實存在的標籤（可能是措辭不夠貼近 Meta 標籤的命名' +
+    '習慣，不是邏輯推理本身有問題）：\n' + JSON.stringify(failedTerms) + '\n\n' +
+    '請針對清單裡的每一個詞，**保留原本的邏輯推理方向不變，不要換成不同的主題或不同的推理**，只是換 ' +
+    '2~3 種不同的具體說法/同義詞/更貼近一般興趣標籤命名習慣的講法，試著提高查到真實標籤的機率（例如原詞' +
+    '是抽象的生活風格描述，可以換成更具體的品牌、活動、次領域名稱；原詞是中文可以試著給對應的英文說法，' +
+    '反之亦然；原詞太長太抽象，可以拆成更精簡、更像標籤名稱的詞）。每個詞盡量精簡（2~6 個字）。\n\n' +
+    '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"original": "原詞", ' +
+    '"alternatives": ["替代說法1", "替代說法2", ...]}，不要加任何說明文字。';
+}
+
+var RETRY_MAX_FAILED_TERMS = 5;
+
+/**
+ * failedTerms：第一輪查無任何結果的間接候選詞。回傳打平後的替代說法字串陣列，
+ * 直接丟給呼叫端重新驗證是否真的存在於 Meta。Gemini 失敗就回空陣列，不影響原本流程。
+ */
+function regenerateFailedTerms_(query, failedTerms) {
+  if (!failedTerms.length) return [];
+  var capped = failedTerms.slice(0, RETRY_MAX_FAILED_TERMS);
+  var parsed = callGemini_(buildRetryPrompt_(query, capped), RETRY_TERMS_RESPONSE_SCHEMA);
+  if (!parsed || !Array.isArray(parsed.results)) return [];
+  var out = [];
+  parsed.results.forEach(function (r) {
+    if (Array.isArray(r.alternatives)) {
+      r.alternatives.forEach(function (alt) {
+        if (alt) out.push(String(alt));
+      });
+    }
+  });
+  return out;
 }
 
 var CLASSIFY_RESPONSE_SCHEMA = {
