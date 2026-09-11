@@ -95,13 +95,18 @@ function filterToInterestClass_(items) {
   });
 }
 
-/** 給定興趣名稱清單，找 Meta 認為相關的其他興趣（type=adinterestsuggestion） */
+/**
+ * 給定興趣名稱清單，找 Meta 認為相關的其他興趣（type=adinterestsuggestion）。
+ * 2026-09-11 修正：這個 API 查無足夠精準的興趣關聯時，會用「行為」「人口統計資料」
+ * 這類其他 class 的熱門標籤補滿結果（跟 searchAdInterest_ 原本就有處理的雜訊補位問題
+ * 是同一種），過濾邏輯跟 searchAdInterest_ 一樣直接沿用 filterToInterestClass_。
+ */
 function searchAdInterestSuggestion_(interestNames) {
   var json = metaGet_('/search', {
     type: 'adinterestsuggestion',
     interest_list: JSON.stringify(interestNames),
   });
-  return json.data || [];
+  return filterToInterestClass_(json.data || []);
 }
 
 /** 抓興趣分類樹（type=adTargetingCategory&class=interests） */
