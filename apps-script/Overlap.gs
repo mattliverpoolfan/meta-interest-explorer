@@ -178,6 +178,13 @@ function deleteOverlapScanTriggers_() {
  * 小範圍分享情境下的已知取捨）——回傳 replaced:true，前端顯示「已被新的搜尋取代」
  * 而不是卡住轉圈。
  */
+// 2026-09-21 修正：lift = 1 代表「跟純屬巧合一樣，沒有真實訊號」（見上面「lift 指標 vs
+// overlap_ratio」）。過去把候選池算完的每一個結果都顯示出來，導致清單尾端一堆 lift 接近
+// 甚至低於 1 的雜訊——這些不是「關聯比較弱」，是統計上根本測不到關聯，顯示出來只會誤導
+// 使用者以為這也是個值得參考的選項。這裡只過濾「顯示」，不影響 OverlapCache 裡的原始
+// 計算結果（那些數字本身沒有錯，只是不值得展示）。
+var MIN_DISPLAY_LIFT = 1.5;
+
 function getOverlapScanStatus_(scanId) {
   var stateStr = PropertiesService.getScriptProperties().getProperty(OVERLAP_SCAN_STATE_KEY);
   if (!stateStr) return { running: false, replaced: true };
@@ -186,6 +193,8 @@ function getOverlapScanStatus_(scanId) {
 
   var results = state.results.map(function (r) {
     return { id: r[0], name: r[1], overlap_ratio: r[2], lift: r[3] };
+  }).filter(function (r) {
+    return r.lift >= MIN_DISPLAY_LIFT;
   }).sort(function (a, b) { return b.lift - a.lift; });
 
   var done = state.cursor >= state.candidates.length;
