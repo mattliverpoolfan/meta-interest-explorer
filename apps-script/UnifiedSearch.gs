@@ -93,7 +93,7 @@ function handleUnifiedSearch_(query) {
   var picked = pickSeed_(query, directResults);
   if (picked) {
     var allIndirectFlat = indirectResults.high.concat(indirectResults.medium, indirectResults.speculative);
-    var candidatePool = buildCandidatePool_(picked.item, directResults, allIndirectFlat);
+    var candidatePool = buildCandidatePool_(picked.item, allIndirectFlat);
     if (candidatePool.length) {
       overlapScan = startOverlapScan_(picked.item, candidatePool, picked.reason);
     }
@@ -219,15 +219,21 @@ function estimatedAudienceSize_(item) {
 }
 
 /**
- * 候選池 = 直接相關（扣掉種子）+ 間接相關 + 從已知標籤庫隨機取樣一批，
- * 隨機取樣是刻意留給「使用者跟 AI 都想不到，但受眾真的重疊」的空間——這正是第三類存在的意義。
+ * 候選池 = 間接相關 + 從已知標籤庫隨機取樣一批。
+ *
+ * 2026-09-21 修正：候選池**不該**包含直接相關。三個分頁定位嚴格分工：①直接相關是 AI
+ * 已經判定「確實存在、語意上毫無疑問」的標籤，這種確定性不需要再靠受眾重疊去驗證——
+ * 使用者在①②③看到同一個標籤反覆出現，只會搞不清楚這個重複代表什麼意義。③受眾重疊比對
+ * 存在的目的，是拿真實數據去驗證/排序②那些「AI 推理出來、本來就帶著不確定性」的間接假設，
+ * 以及使用者跟 AI 都想不到的隨機發現——間接相關進候選池是合理的配對（用真實數據驗證假設），
+ * 直接相關進候選池則是無意義的重複顯示，之前這裡誤把兩者混在一起。
  */
-function buildCandidatePool_(seed, directResults, indirectResults) {
+function buildCandidatePool_(seed, indirectResults) {
   var seenIds = {};
   seenIds[String(seed.id)] = true;
   var pool = [];
 
-  directResults.concat(indirectResults).forEach(function (item) {
+  indirectResults.forEach(function (item) {
     var id = String(item.id);
     if (seenIds[id]) return;
     if (estimatedAudienceSize_(item) < MIN_CANDIDATE_AUDIENCE_SIZE) return;
@@ -250,7 +256,7 @@ function buildCandidatePool_(seed, directResults, indirectResults) {
       }
     }
   } catch (e) {
-    Logger.log('候選池隨機取樣失敗，僅用直接/間接相關的結果：' + e.message);
+    Logger.log('候選池隨機取樣失敗，僅用間接相關的結果：' + e.message);
   }
 
   return pool.slice(0, OVERLAP_CANDIDATE_POOL_LIMIT);
