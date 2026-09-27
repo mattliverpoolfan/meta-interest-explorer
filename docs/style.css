@@ -267,10 +267,59 @@ button:disabled {
 }
 
 .manual-compare-input {
+  width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
+}
+
+.manual-compare-field {
+  position: relative;
+}
+
+.autocomplete-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .1);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.autocomplete-dropdown li {
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.autocomplete-dropdown li:hover,
+.autocomplete-dropdown li.active {
+  background: var(--accent-weak);
+}
+
+.autocomplete-dropdown li .path {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.autocomplete-dropdown li.empty {
+  color: var(--muted);
+  cursor: default;
+}
+
+.autocomplete-dropdown li.empty:hover {
+  background: none;
 }
 
 .status {

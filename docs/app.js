@@ -34,6 +34,7 @@ function init() {
     runUnifiedSearch();
   });
   el('manual-compare-btn').addEventListener('click', computeManualOverlap);
+  setupManualCompareAutocomplete();
   initTabs();
 
   loadCategories();
@@ -332,6 +333,7 @@ const MANUAL_COMPARE_MAX = 5;
 
 // 跟上面「一次搜尋三類結果」完全獨立：使用者直接打字給名稱，
 // 這裡才去反查對應的 Meta 興趣 id，不需要先經過搜尋結果點選的流程。
+// 保留這條路徑是給不想用下拉選單、直接打完整正確名稱的使用者當退路。
 async function resolveInterestByName_(name) {
   const results = await apiGet('searchInterests', { q: name });
   if (!results.length) throw new Error(`找不到「${name}」`);
@@ -340,13 +342,123 @@ async function resolveInterestByName_(name) {
   return { id: picked.id, name: picked.name };
 }
 
+function debounce(fn, delay) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
+}
+
+// 2026-09-27 新增：原本要求使用者盲打出跟 Meta 後台一字不差的名稱才能用，
+// 太麻煩。現在每個輸入框輸入時即時查詢真實存在的標籤、列出選單點選——
+// 選過之後把 id/name 存在 input 的 dataset 上當作「已確認」，使用者只要
+// 再動手改文字就視為未確認（下面的 input listener 會清掉），computeManualOverlap
+// 才會退回 resolveInterestByName_ 那條靠文字反查的舊路線。
+function setupManualCompareAutocomplete() {
+  document.querySelectorAll('.manual-compare-field').forEach((field) => {
+    const input = field.querySelector('.manual-compare-input');
+    const dropdown = field.querySelector('.autocomplete-dropdown');
+    let items = [];
+    let activeIndex = -1;
+
+    const closeDropdown = () => {
+      dropdown.hidden = true;
+      dropdown.innerHTML = '';
+      items = [];
+      activeIndex = -1;
+    };
+
+    const highlight = (index) => {
+      const lis = dropdown.querySelectorAll('li[data-index]');
+      lis.forEach((li) => li.classList.remove('active'));
+      if (index >= 0 && index < lis.length) {
+        lis[index].classList.add('active');
+        lis[index].scrollIntoView({ block: 'nearest' });
+      }
+      activeIndex = index;
+    };
+
+    const renderDropdown = (results) => {
+      items = results;
+      activeIndex = -1;
+      if (!items.length) {
+        dropdown.innerHTML = '<li class="empty">查無符合的標籤</li>';
+        dropdown.hidden = false;
+        return;
+      }
+      dropdown.innerHTML = items.map((item, i) => {
+        const pathText = safeParsePath(item.path).slice(1).join(' > ');
+        return `<li data-index="${i}">${item.name}${pathText ? `<span class="path">${pathText}</span>` : ''}</li>`;
+      }).join('');
+      dropdown.hidden = false;
+    };
+
+    const selectItem = (item) => {
+      input.value = item.name;
+      input.dataset.selectedId = item.id;
+      input.dataset.selectedName = item.name;
+      closeDropdown();
+    };
+
+    const search = debounce(async () => {
+      const q = input.value.trim();
+      if (!q) { closeDropdown(); return; }
+      try {
+        const results = await apiGet('searchInterests', { q });
+        // 使用者可能在等回應時已經改字或清空，避免舊回應蓋掉新狀態
+        if (input.value.trim() !== q) return;
+        renderDropdown(results.slice(0, 8));
+      } catch (e) {
+        closeDropdown();
+      }
+    }, 300);
+
+    input.addEventListener('input', () => {
+      delete input.dataset.selectedId;
+      delete input.dataset.selectedName;
+      search();
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (dropdown.hidden || e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        highlight(Math.min(activeIndex + 1, items.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        highlight(Math.max(activeIndex - 1, 0));
+      } else if (e.key === 'Enter') {
+        if (activeIndex >= 0 && items[activeIndex]) {
+          e.preventDefault();
+          selectItem(items[activeIndex]);
+        }
+      } else if (e.key === 'Escape') {
+        closeDropdown();
+      }
+    });
+
+    // mousedown（不是 click）搶在 input 的 blur 之前處理，並 preventDefault
+    // 讓 input 不會失焦，選取流程不用跟 blur 關閉下拉選單的時機互搶。
+    dropdown.addEventListener('mousedown', (e) => {
+      const li = e.target.closest('li[data-index]');
+      if (!li) return;
+      e.preventDefault();
+      selectItem(items[Number(li.dataset.index)]);
+    });
+
+    input.addEventListener('blur', () => {
+      setTimeout(closeDropdown, 150);
+    });
+  });
+}
+
 async function computeManualOverlap() {
   const statusEl = el('manual-compare-status');
-  const names = Array.from(document.querySelectorAll('.manual-compare-input'))
-    .map((input) => input.value.trim())
-    .filter(Boolean);
+  const inputs = Array.from(document.querySelectorAll('.manual-compare-input'))
+    .filter((input) => input.value.trim());
 
-  if (names.length < MANUAL_COMPARE_MIN || names.length > MANUAL_COMPARE_MAX) {
+  if (inputs.length < MANUAL_COMPARE_MIN || inputs.length > MANUAL_COMPARE_MAX) {
     statusEl.textContent = `請輸入 ${MANUAL_COMPARE_MIN}～${MANUAL_COMPARE_MAX} 個標籤`;
     statusEl.classList.add('error');
     return;
@@ -358,8 +470,14 @@ async function computeManualOverlap() {
 
   try {
     const items = [];
-    for (const name of names) {
-      items.push(await resolveInterestByName_(name));
+    for (const input of inputs) {
+      const typed = input.value.trim();
+      // 從下拉選單選過、而且文字之後沒有再被改動，直接信任已確認的 id，不用重打一次 API。
+      if (input.dataset.selectedId && input.dataset.selectedName === typed) {
+        items.push({ id: input.dataset.selectedId, name: input.dataset.selectedName });
+      } else {
+        items.push(await resolveInterestByName_(typed));
+      }
     }
 
     statusEl.textContent = '計算重疊中（每組要打好幾次 Meta API，會需要幾秒到十幾秒）…';

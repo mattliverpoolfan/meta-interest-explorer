@@ -68,13 +68,28 @@
   <div class="layout layout-single">
     <section class="panel">
       <h2>自行比對重疊率</h2>
-      <p class="status">跟左邊的探索/檢索是兩種獨立情境：這裡不用搜尋、不用工作清單，直接輸入 2～5 個你已經知道的興趣標籤名稱（要跟 Meta 後台的名稱完全一致），系統幫你算彼此的受眾重疊比例。</p>
+      <p class="status">跟左邊的探索/檢索是兩種獨立情境：這裡不用搜尋、不用工作清單，直接輸入 2～5 個興趣標籤——輸入時會即時列出 Meta 後台真實存在的建議選項，點選即可，不用自己確保打字跟後台名稱完全一致，系統幫你算彼此的受眾重疊比例。</p>
       <div id="manual-compare-inputs" class="manual-compare-inputs">
-        <input class="manual-compare-input" placeholder="興趣標籤 1">
-        <input class="manual-compare-input" placeholder="興趣標籤 2">
-        <input class="manual-compare-input" placeholder="興趣標籤 3（選填）">
-        <input class="manual-compare-input" placeholder="興趣標籤 4（選填）">
-        <input class="manual-compare-input" placeholder="興趣標籤 5（選填）">
+        <div class="manual-compare-field">
+          <input class="manual-compare-input" placeholder="興趣標籤 1" autocomplete="off">
+          <ul class="autocomplete-dropdown" hidden></ul>
+        </div>
+        <div class="manual-compare-field">
+          <input class="manual-compare-input" placeholder="興趣標籤 2" autocomplete="off">
+          <ul class="autocomplete-dropdown" hidden></ul>
+        </div>
+        <div class="manual-compare-field">
+          <input class="manual-compare-input" placeholder="興趣標籤 3（選填）" autocomplete="off">
+          <ul class="autocomplete-dropdown" hidden></ul>
+        </div>
+        <div class="manual-compare-field">
+          <input class="manual-compare-input" placeholder="興趣標籤 4（選填）" autocomplete="off">
+          <ul class="autocomplete-dropdown" hidden></ul>
+        </div>
+        <div class="manual-compare-field">
+          <input class="manual-compare-input" placeholder="興趣標籤 5（選填）" autocomplete="off">
+          <ul class="autocomplete-dropdown" hidden></ul>
+        </div>
       </div>
       <div style="margin-top:10px;">
         <button id="manual-compare-btn" class="primary">比對重疊率</button>
