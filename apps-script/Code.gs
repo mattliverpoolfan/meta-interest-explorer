@@ -55,11 +55,15 @@ function requireApiKey_(key) {
 
 // ── 唯讀端點的實作 ────────────────────────────────────────────────────────
 
+// 2026-09-27 修正：使用者要的是「這裡看到的建議，要跟親自去廣告後台搜尋完全一致」。
+// 本地快取只是先前批次掃描留下的不完整快照，「快取只要有一筆結果就整個跳過即時查詢」
+// 這個舊邏輯會讓 Meta 上真實存在、但快取沒收錄到的相關標籤被完全遮蔽——例如中文
+// 「瑜珈」／「瑜伽」這種常見的同義寫法，快取剛好只收錄其中一種寫法的標籤，就會讓
+// 另一種寫法（例如「訶陀瑜伽」）永遠不會被看到，即使 Meta 真的查得到。改成一律
+// 即時查 Meta，才能保證使用者在這裡打字看到的，就是真的去廣告後台搜同一個字會看到
+// 的東西——代價是每次查詢都要真的打一次 Meta API，會比查本地快取慢（實測約 2~4 秒）。
 function handleSearchInterests_(q) {
   if (!q) return [];
-  var cached = searchCachedInterests_(q);
-  if (cached.length) return cached;
-  // 快取沒有才即時查 Meta；傳入 isLiveQuery=true 使用 targetingsearch 自動過濾無效標籤
   return searchAdInterest_(q, 50, true);
 }
 
