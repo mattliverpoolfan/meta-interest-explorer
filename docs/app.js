@@ -2,7 +2,7 @@
 
 // Web App 網址是固定的，寫死在這裡就好，不需要使用者自己貼；
 // apiKey 則從分享連結的 ?key= 參數自動帶入（見 init() 底部），不做成畫面上的輸入框。
-const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwXc4YcC_LXUeBewkdm4NompMYeaOGpPsHXe72yVsM62VXt3_4ecGlejjvQAI0K6g3_/exec';
+const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbzgwMV9w7N9pVuSjQ4zOLifBMx7v3nUAma12UR2yQeEnQbmJcM2d95zHiz8offXYE1l/exec';
 
 const state = {
   apiKey: localStorage.getItem('apiKey') || '',
