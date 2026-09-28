@@ -134,10 +134,15 @@ function dedupeVerifiedById_(list) {
 
 /**
  * 每個候選詞都是「搜尋詞」不是「答案」，逐一驗證是否真的存在，回傳 {item, term}。
- * 先查快取（`searchCachedInterests_`）、有結果就不打即時 API——快取是先前批次掃描
- * 已經驗證過的真實標籤；只有快取查無任何結果時才退回即時查詢，Meta 的即時
- * targetingsearch 查無精準匹配時會補位不相關的熱門標籤，但這裡不需要處理，
- * 交給後面統一的 classifyAndTierResults_ 判斷去留。
+ *
+ * 2026-09-28 修正：原本先查快取（`searchCachedInterests_`）、有結果就不打即時 API，
+ * 跟 `handleSearchInterests_` 修掉的問題是同一種——快取只是先前批次掃描留下的不完整
+ * 快照，「快取有一筆就整個跳過即時查詢」會讓 Meta 上真實存在、但快取沒收錄到的同義
+ * 寫法標籤被遮蔽（例如「瑜珈」／「瑜伽」）。這裡驗證的是 AI 聯想出的 8-12 個候選詞，
+ * 一律即時查才能保證跟後台實際查得到的一致，代價是這一步的 Meta API 呼叫量會比照
+ * 候選詞數量增加（不再有快取命中可以省下即時查詢）。Meta 的即時 targetingsearch 查無
+ * 精準匹配時會補位不相關的熱門標籤，但這裡不需要處理，交給後面統一的
+ * classifyAndTierResults_ 判斷去留。
  */
 function verifyTermsAgainstMeta_(terms) {
   var seen = {};
@@ -145,8 +150,7 @@ function verifyTermsAgainstMeta_(terms) {
   terms.forEach(function (term, index) {
     if (index > 0) Utilities.sleep(UNIFIED_SEARCH_TERM_DELAY_MS);
     try {
-      var results = searchCachedInterests_(term);
-      if (!results.length) results = searchAdInterest_(term, 20, true);
+      var results = searchAdInterest_(term, 20, true);
       results.slice(0, MAX_VERIFIED_PER_TERM).forEach(function (item) {
         var id = String(item.id);
         if (seen[id]) return;
