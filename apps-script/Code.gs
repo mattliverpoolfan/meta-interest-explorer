@@ -64,7 +64,9 @@ function requireApiKey_(key) {
 // 的東西——代價是每次查詢都要真的打一次 Meta API，會比查本地快取慢（實測約 2~4 秒）。
 function handleSearchInterests_(q) {
   if (!q) return [];
-  return searchAdInterest_(q, 50, true);
+  var results = searchAdInterest_(q, 50, true);
+  recordLiveInterestSightings_(results);
+  return results;
 }
 
 /**
@@ -111,8 +113,14 @@ function getRefreshStatus_() {
 // ── 批次刷新快照 ──────────────────────────────────────────────────────────
 // Apps Script 單次執行上限 6 分鐘，關鍵字一多跑不完，所以拆成多個批次，
 // 每批跑完自己排一個 1 分鐘後的觸發器接著跑下一批，直到全部關鍵字處理完。
-
-var REFRESH_BATCH_SIZE = 200;
+//
+// 2026-09-28 修正：原本設 200，實測跑系統性擴散（一次要處理幾千個詞）時，
+// 執行紀錄裡真的出現「逾時」——某一批跑了 360.68 秒，正好卡在 6 分鐘的硬上限被
+// 強制中斷，連續幾次之後 Google 直接把整個排程觸發器自動停用。跟 Meta 的額度
+// 無關，純粹是這個數字設太大，遇到網路稍慢就會超過上限。改成 80：實測每個關鍵字
+// 平均耗時約 1.2~1.3 秒（233 秒/200、259 秒/200），80 個抓寬一點抓到 2 秒/個的
+// 情況也只要 160 秒，離 6 分鐘還有一大截安全空間。
+var REFRESH_BATCH_SIZE = 80;
 
 /**
  * 供在 Apps Script 編輯器中手動點選「▶ 執行」的進入點。
@@ -186,19 +194,45 @@ function startOrContinueRefresh_() {
   var props = PropertiesService.getScriptProperties();
   var stateStr = props.getProperty('REFRESH_STATE');
   if (!stateStr) {
-    var keywords = getSeedKeywords_();
-    if (!keywords.length) throw new Error('SeedKeywords 分頁是空的，請先加幾個關鍵字再刷新');
+    var seedKeywords = getSeedKeywords_();
+    if (!seedKeywords.length) throw new Error('SeedKeywords 分頁是空的，請先加幾個關鍵字再刷新');
+
+    // 2026-09-28 修正：Meta 自己有一份官方興趣分類清單（type=adTargetingCategory,
+    // class=interests），回傳的資料結構跟 Interests 分頁存的標籤完全一樣（同樣是
+    // 「興趣」class，同樣有 id、受眾規模），是真的可以直接拿去投放的標籤，不是只能
+    // 拿去釣魚用的搜尋詞——原本這份清單只寫進獨立的 Categories 分頁（給分類瀏覽
+    // 用），從來沒有併進 Interests。這裡先併進去，讓下面組搜尋詞時能一併把分類
+    // 名稱當種子用。抓分類清單失敗不影響原本用關鍵字掃描的部分，照樣繼續跑。
+    try {
+      upsertFoundInterests_(searchAdTargetingCategory_(), 'category_tree');
+    } catch (e) {
+      Logger.log('抓 Meta 官方分類清單失敗，這次刷新略過分類補充：' + e.message);
+    }
+
     var state = {
       snapshotId: 'snap_' + new Date().getTime(),
       prevSnapshotId: getLatestSnapshotId_(),
       startedAt: new Date().toISOString(),
-      keywords: keywords,
+      keywords: buildUnsearchedCandidates_(seedKeywords),
       cursor: 0,
       categoriesDone: false,
     };
     props.setProperty('REFRESH_STATE', JSON.stringify(state));
   }
   runRefreshBatch();
+}
+
+/**
+ * 2026-09-28 新增：組出「真的還沒被拿去搜過」的搜尋詞——來源是 extraTerms（種子關鍵字，
+ * 或空陣列）加上資料庫目前所有標籤自己的名字，扣掉 SearchedTerms 分頁裡已經記錄過的。
+ * 這是「系統性擴散」的核心：資料庫裡的標籤名字本身也拿去再搜一次，找它們的鄰居，
+ * 但已經搜過的詞永遠不會被重複搜，保證每一輪都在真正往外擴張，而不是原地打轉。
+ */
+function buildUnsearchedCandidates_(extraTerms) {
+  var searched = getSearchedTermsSet_();
+  var allNames = readSheetAsObjects_(SHEETS.INTERESTS).map(function (r) { return r.name; });
+  var candidates = dedupeStrings_((extraTerms || []).concat(allNames));
+  return candidates.filter(function (t) { return !searched[t]; });
 }
 
 function getLatestSnapshotId_() {
@@ -212,6 +246,15 @@ function runRefreshBatch() {
   var stateStr = props.getProperty('REFRESH_STATE');
   if (!stateStr) return; // 沒有進行中的刷新，可能是被手動清掉了
   var state = JSON.parse(stateStr);
+
+  // 2026-09-28 新增：Meta 每次回應都會附帶這個 App 目前用掉多少額度百分比的標頭
+  // （實測過，見 CLAUDE.md），批次掃描前先看一下，真的偏高就延後 30 分鐘再試，
+  // 不要等到被 Meta 擋掉才知道。目前實測遠低於門檻，正常情況不會走到這個分支。
+  if (shouldPauseForMetaUsage_()) {
+    Logger.log('Meta 應用程式額度使用率偏高，延後 30 分鐘後再繼續這批（狀態、進度都保留）。');
+    scheduleNextBatch_(30);
+    return;
+  }
 
   if (!state.categoriesDone) {
     refreshCategoryTree_();
@@ -230,49 +273,30 @@ function runRefreshBatch() {
   });
 
   upsertFoundInterests_(found, state.snapshotId);
+  recordSearchedTerms_(batch);
 
   state.cursor += REFRESH_BATCH_SIZE;
-  var isDone = state.cursor >= state.keywords.length;
 
-  if (isDone) {
-    // 方案 B：自動關聯拓圈（Recursive Expansion）
-    expandRelatedSuggestions_(state);
+  if (state.cursor >= state.keywords.length) {
+    // 2026-09-28 修正：原本這裡就直接收尾，換成先檢查資料庫裡是不是又多了「還沒
+    // 被拿去搜過」的新標籤名字（這一批剛找到的、或更早之前找到但還沒輪到的）——
+    // 有的話代表還沒搜到飽和，接到隊伍後面繼續搜下一輪；完全沒有新的可搜，才是
+    // 真的搜到飽和，這時候才真正收尾。這個迴圈本身就是「系統性擴散」的完整實作，
+    // 取代原本依賴已失效 adinterestsuggestion API 的方案 B。
+    var moreCandidates = buildUnsearchedCandidates_([]);
+    if (moreCandidates.length) {
+      Logger.log('這一輪搜完又找到 ' + moreCandidates.length + ' 個還沒搜過的新標籤，繼續下一輪。');
+      state.keywords = state.keywords.concat(moreCandidates);
+      props.setProperty('REFRESH_STATE', JSON.stringify(state));
+      scheduleNextBatch_();
+      return;
+    }
     finalizeRefresh_(state);
     props.deleteProperty('REFRESH_STATE');
     deleteRefreshTriggers_();
   } else {
     props.setProperty('REFRESH_STATE', JSON.stringify(state));
     scheduleNextBatch_();
-  }
-}
-
-/** 方案 B：自動抽取當前熱門標籤，向 Meta 要求官方關聯建議，自動拓圈 500~1500 筆長尾受眾 */
-function expandRelatedSuggestions_(state) {
-  try {
-    var all = readSheetAsObjects_(SHEETS.INTERESTS);
-    var sampleNames = [];
-    for (var i = 0; i < all.length && sampleNames.length < 30; i++) {
-      if (all[i].name && sampleNames.indexOf(all[i].name) === -1) {
-        sampleNames.push(all[i].name);
-      }
-    }
-    if (sampleNames.length) {
-      Logger.log('正在執行方案 B 自動關聯拓圈，選取代表詞：' + sampleNames.slice(0, 5).join(', '));
-      for (var j = 0; j < sampleNames.length; j += 5) {
-        var chunk = sampleNames.slice(j, j + 5);
-        try {
-          var res = searchAdInterestSuggestion_(chunk);
-          if (res && res.length) {
-            upsertFoundInterests_(res, state.snapshotId);
-          }
-        } catch (e) {
-          Logger.log('關聯推薦跳過：' + e.message);
-        }
-        Utilities.sleep(200);
-      }
-    }
-  } catch (e) {
-    Logger.log('關聯拓圈異常：' + e.message);
   }
 }
 
@@ -322,9 +346,26 @@ function upsertFoundInterests_(found, snapshotId) {
   upsertRows_(SHEETS.INTERESTS, 'id', rows);
 }
 
-function scheduleNextBatch_() {
+/**
+ * 2026-09-28 新增：平常使用者查詢時，即時查到的標籤原本用完就丟，沒有存回資料庫。
+ * 讓每次即時查詢順便把查到的結果回填，資料庫會隨著大家實際在查的東西自然變大，
+ * 不用等每週排程的批次掃描，而且會朝著「使用者真正在意的方向」成長，不是朝著
+ * 種子關鍵字清單猜的方向。用 'live_query' 當 snapshotId 標記來源，跟批次掃描的
+ * snap_xxx 區分開來。寫入失敗不影響本次查詢結果本身（try/catch 吞掉）。
+ */
+function recordLiveInterestSightings_(items) {
+  if (!items || !items.length) return;
+  try {
+    upsertFoundInterests_(items, 'live_query');
+  } catch (e) {
+    Logger.log('即時查詢結果回填資料庫失敗（不影響本次查詢結果）：' + e.message);
+  }
+}
+
+/** delayMinutes 省略時預設 1 分鐘（正常批次間隔）；額度偏高時會傳更長的延遲。 */
+function scheduleNextBatch_(delayMinutes) {
   deleteRefreshTriggers_();
-  ScriptApp.newTrigger('runRefreshBatch').timeBased().after(60 * 1000).create();
+  ScriptApp.newTrigger('runRefreshBatch').timeBased().after((delayMinutes || 1) * 60 * 1000).create();
 }
 
 function deleteRefreshTriggers_() {

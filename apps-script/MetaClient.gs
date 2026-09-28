@@ -12,6 +12,42 @@
 
 var META_BASE = 'https://graph.facebook.com';
 
+// 2026-09-28 新增：Meta 每次回應其實都會附帶這個 App 目前用掉多少額度百分比的標頭
+// （實測過：連續打 5 次搜尋，call_count/total_cputime/total_time 都是個位數百分比，
+// 詳見 CLAUDE.md），批次掃描可以拿這個數字當安全閥，真的接近上限再自己停下來，
+// 不用等到被 Meta 擋掉才知道。
+var META_USAGE_PROPERTY = 'LAST_META_USAGE_PCT';
+var META_USAGE_SAFE_THRESHOLD = 80;
+
+/** 記錄失敗（例如標頭格式變動）不影響本次 API 呼叫本身的結果，全部吞掉。 */
+function recordMetaUsageFromResponse_(response) {
+  try {
+    var headers = response.getAllHeaders();
+    var maxPct = 0;
+    Object.keys(headers).forEach(function (k) {
+      if (!/usage/i.test(k)) return;
+      var parsed;
+      try {
+        parsed = JSON.parse(headers[k]);
+      } catch (e2) {
+        return;
+      }
+      ['call_count', 'total_cputime', 'total_time'].forEach(function (field) {
+        if (typeof parsed[field] === 'number' && parsed[field] > maxPct) maxPct = parsed[field];
+      });
+    });
+    PropertiesService.getScriptProperties().setProperty(META_USAGE_PROPERTY, String(maxPct));
+  } catch (e) {
+    // 忽略，不影響本次查詢
+  }
+}
+
+function shouldPauseForMetaUsage_() {
+  var raw = PropertiesService.getScriptProperties().getProperty(META_USAGE_PROPERTY);
+  if (!raw) return false;
+  return Number(raw) >= META_USAGE_SAFE_THRESHOLD;
+}
+
 function getMetaConfig_() {
   var props = PropertiesService.getScriptProperties();
   var token = props.getProperty('META_ACCESS_TOKEN');
@@ -34,6 +70,7 @@ function metaGet_(path, params) {
   var url = META_BASE + '/' + config.version + path + '?access_token=' + encodeURIComponent(config.token) + (qs ? '&' + qs : '');
 
   var response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  recordMetaUsageFromResponse_(response);
   var code = response.getResponseCode();
   var body = response.getContentText();
   var json;

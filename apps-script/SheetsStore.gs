@@ -14,6 +14,7 @@ var SHEETS = {
   RELATED_CACHE: 'RelatedCache',
   OVERLAP_CACHE: 'OverlapCache',
   SEED_KEYWORDS: 'SeedKeywords',
+  SEARCHED_TERMS: 'SearchedTerms',
 };
 
 var SHEET_HEADERS = {
@@ -23,6 +24,7 @@ var SHEET_HEADERS = {
   RelatedCache: ['seed_interest_id', 'related_json', 'computed_at'],
   OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'lift', 'computed_at'],
   SeedKeywords: ['keyword'],
+  SearchedTerms: ['term'],
 };
 
 var DEFAULT_SEED_KEYWORDS = [
@@ -177,6 +179,37 @@ function upsertRows_(name, keyField, rows) {
   }
 }
 
+/**
+ * 2026-09-28 新增：記錄每一個「真的被拿去問過 Meta」的搜尋詞（不管來源是種子關鍵字、
+ * 官方分類名稱、還是資料庫裡標籤自己的名字），讓系統性擴散不會重複搜同一個詞。
+ */
+function getSearchedTermsSet_() {
+  var rows = readSheetAsObjects_(SHEETS.SEARCHED_TERMS);
+  var set = {};
+  rows.forEach(function (r) {
+    var t = String(r.term || '').trim();
+    if (t) set[t] = true;
+  });
+  return set;
+}
+
+/** 只 append 真正還沒記錄過的詞，避免同一個詞在分頁裡重複出現。 */
+function recordSearchedTerms_(terms) {
+  if (!terms || !terms.length) return;
+  var existing = getSearchedTermsSet_();
+  var seen = {};
+  var toAppend = [];
+  terms.forEach(function (t) {
+    var term = String(t || '').trim();
+    if (!term || existing[term] || seen[term]) return;
+    seen[term] = true;
+    toAppend.push([term]);
+  });
+  if (!toAppend.length) return;
+  var sheet = getSheet_(SHEETS.SEARCHED_TERMS);
+  sheet.getRange(sheet.getLastRow() + 1, 1, toAppend.length, 1).setValues(toAppend);
+}
+
 function appendRow_(name, row) {
   var headers = SHEET_HEADERS[name];
   var sheet = getSheet_(name);
@@ -214,5 +247,20 @@ function getSeedKeywords_() {
     sheet.getRange(2, 1, fallbackRows.length, 1).setValues(fallbackRows);
     return DEFAULT_SEED_KEYWORDS;
   }
+
+  // 2026-09-28 修正：DEFAULT_SEED_KEYWORDS 這份常數後來擴充過（166 → 341 個），
+  // 但上面的自動補值只在分頁「完全是空的」時才會寫入預設值，導致分頁一旦建立過，
+  // 之後常數擴充的部分永遠不會真的補進分頁——實測發現分頁停在舊的 166 個，
+  // 常數裡多出來的 175 個新關鍵字從來沒被用過。這裡把常數裡分頁目前沒有的
+  // 關鍵字直接補進去，既有列不動、不會重複。
+  var existingSet = {};
+  keywords.forEach(function (k) { existingSet[k] = true; });
+  var missing = DEFAULT_SEED_KEYWORDS.filter(function (k) { return !existingSet[k]; });
+  if (missing.length) {
+    var appendRows = missing.map(function (k) { return [k]; });
+    sheet.getRange(sheet.getLastRow() + 1, 1, appendRows.length, 1).setValues(appendRows);
+    keywords = keywords.concat(missing);
+  }
+
   return keywords;
 }

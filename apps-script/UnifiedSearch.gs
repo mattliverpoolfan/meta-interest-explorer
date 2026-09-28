@@ -151,6 +151,7 @@ function verifyTermsAgainstMeta_(terms) {
     if (index > 0) Utilities.sleep(UNIFIED_SEARCH_TERM_DELAY_MS);
     try {
       var results = searchAdInterest_(term, 20, true);
+      recordLiveInterestSightings_(results);
       results.slice(0, MAX_VERIFIED_PER_TERM).forEach(function (item) {
         var id = String(item.id);
         if (seen[id]) return;
