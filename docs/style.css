@@ -146,12 +146,35 @@ body {
 
 .result-list li {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
+}
+
+.reason-toggle {
+  flex-basis: 100%;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.reason-toggle:hover {
+  text-decoration: underline;
+}
+
+.reason-text {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .result-list li.empty {

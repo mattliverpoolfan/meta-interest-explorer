@@ -74,6 +74,9 @@ function handleUnifiedSearch_(query) {
     if (estimatedAudienceSize_(entry.item) <= 0) return;
     if (c.bucket === 'indirect') {
       var tier = (c.tier === 1 || c.tier === 2 || c.tier === 3) ? c.tier : 2;
+      // reason 是 AI 這筆分類當下的實際判斷依據，收合顯示在前端，讓使用者自己判斷
+      // 這個關聯強度給得有沒有道理，不用每次懷疑都得靠重複測試去猜 AI 在想什麼。
+      entry.item.reason = c.reason || '';
       indirectByTier[tier].push(entry.item);
     } else {
       // closeness 掛在標籤物件上，只給 pickSeed_ 挑種子用，不是要顯示給使用者看的欄位。

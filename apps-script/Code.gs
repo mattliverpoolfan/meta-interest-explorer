@@ -117,10 +117,18 @@ function getRefreshStatus_() {
 // 2026-09-28 修正：原本設 200，實測跑系統性擴散（一次要處理幾千個詞）時，
 // 執行紀錄裡真的出現「逾時」——某一批跑了 360.68 秒，正好卡在 6 分鐘的硬上限被
 // 強制中斷，連續幾次之後 Google 直接把整個排程觸發器自動停用。跟 Meta 的額度
-// 無關，純粹是這個數字設太大，遇到網路稍慢就會超過上限。改成 80：實測每個關鍵字
-// 平均耗時約 1.2~1.3 秒（233 秒/200、259 秒/200），80 個抓寬一點抓到 2 秒/個的
-// 情況也只要 160 秒，離 6 分鐘還有一大截安全空間。
+// 無關，純粹是這個數字設太大，遇到網路稍慢就會超過上限。改成 80 之後隔天又遇到
+// 一次同樣的逾時（80 筆這次跑了 360.7 秒，平均每筆 4.5 秒，遠高於原本實測的
+// 1.2~1.3 秒）——代表 Meta 單次查詢的耗時本身會波動，光憑「固定筆數」去猜一個
+// 安全值靠不住，同一個數字換一個時段跑就可能又超過。
+//
+// 2026-09-29 修正：改成直接量時間，不用猜筆數。REFRESH_BATCH_SIZE 只當作「軟
+// 上限」（就算時間還很充裕，一批最多還是不超過這個筆數），真正的安全機制是
+// REFRESH_BATCH_TIME_BUDGET_MS——批次執行中持續檢查已經花了多久，一旦逼近這個
+// 時間就提前結束這一批（剩下的留給下一批接著處理，state.cursor 只會前進到真正
+// 處理完的筆數，不會漏掉任何詞），不管當下 Meta 回應快或慢都不會撞到 6 分鐘上限。
 var REFRESH_BATCH_SIZE = 80;
+var REFRESH_BATCH_TIME_BUDGET_MS = 4 * 60 * 1000;
 
 /**
  * 供在 Apps Script 編輯器中手動點選「▶ 執行」的進入點。
@@ -261,21 +269,30 @@ function runRefreshBatch() {
     state.categoriesDone = true;
   }
 
-  var batch = state.keywords.slice(state.cursor, state.cursor + REFRESH_BATCH_SIZE);
+  var batchStartTime = new Date().getTime();
+  var endIndex = Math.min(state.cursor + REFRESH_BATCH_SIZE, state.keywords.length);
   var found = [];
-  batch.forEach(function (keyword) {
+  var processedTerms = [];
+  for (var i = state.cursor; i < endIndex; i++) {
+    if (new Date().getTime() - batchStartTime > REFRESH_BATCH_TIME_BUDGET_MS) {
+      Logger.log('這批已經逼近安全時間上限，提前結束（這批實際處理了 ' + processedTerms.length +
+        ' 筆），剩下的留給下一批繼續。');
+      break;
+    }
+    var keyword = state.keywords[i];
     try {
       searchAdInterest_(keyword, 200, false).forEach(function (r) { found.push(r); });
     } catch (e) {
       Logger.log('關鍵字「' + keyword + '」查詢失敗：' + e.message);
     }
+    processedTerms.push(keyword);
     Utilities.sleep(200);
-  });
+  }
 
   upsertFoundInterests_(found, state.snapshotId);
-  recordSearchedTerms_(batch);
+  recordSearchedTerms_(processedTerms);
 
-  state.cursor += REFRESH_BATCH_SIZE;
+  state.cursor += processedTerms.length;
 
   if (state.cursor >= state.keywords.length) {
     // 2026-09-28 修正：原本這裡就直接收尾，換成先檢查資料庫裡是不是又多了「還沒

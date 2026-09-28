@@ -235,6 +235,26 @@ function renderResultList(listEl, items) {
     const li = document.createElement('li');
     const pathText = safeParsePath(item.path).join(' > ');
     li.innerHTML = `<span class="name">${item.name}</span>` + (pathText ? `<span class="path">${pathText}</span>` : '');
+
+    // reason 只有間接相關才有（direct 沒有設這個欄位），收合顯示，
+    // 讓使用者自己判斷 AI 給的關聯強度有沒有道理，不用每次都要重新測試去猜。
+    if (item.reason) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'reason-toggle';
+      toggle.textContent = '為什麼？';
+      const reasonEl = document.createElement('div');
+      reasonEl.className = 'reason-text';
+      reasonEl.textContent = item.reason;
+      reasonEl.hidden = true;
+      toggle.addEventListener('click', () => {
+        reasonEl.hidden = !reasonEl.hidden;
+        toggle.textContent = reasonEl.hidden ? '為什麼？' : '收起';
+      });
+      li.appendChild(toggle);
+      li.appendChild(reasonEl);
+    }
+
     listEl.appendChild(li);
   });
 }

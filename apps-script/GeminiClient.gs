@@ -262,8 +262,9 @@ var CLASSIFY_RESPONSE_SCHEMA = {
           bucket: { type: 'STRING', enum: ['direct', 'indirect', 'unrelated'] },
           tier: { type: 'INTEGER' },
           closeness: { type: 'INTEGER' },
+          reason: { type: 'STRING' },
         },
-        required: ['bucket', 'tier', 'closeness'],
+        required: ['bucket', 'tier', 'closeness', 'reason'],
       },
     },
   },
@@ -342,16 +343,22 @@ function classifyAndTierResults_(query, candidates) {
     '同樣是跑步領域的裝備，但跟「鞋子」本身的距離比「慢跑」這個動作要遠，closeness 該給比較低的分數）。' +
     '這個分數是拿來在沒有精準比對到搜尋詞本身時，從 direct 裡面挑一個「最接近原意」的標籤當受眾重疊比對' +
     '的種子錨點用，請務必依照真實的語意距離給分、拉開差距，不要每筆都給差不多的分數。\n\n' +
+    'reason：用一句話（不超過約 40 字）講清楚「這個標籤為什麼被判這個 bucket/tier」，講的是你剛剛判斷時' +
+    '實際依據的邏輯，不是重述標籤名稱或搜尋詞。bucket="indirect" 時尤其重要，要明確講出「這群受眾的' +
+    '什麼共同特質，讓他們也會對這個標籤感興趣」這條推理鏈（例如「露營車代表的是車輛/長途旅遊消費力，' +
+    '跟慢跑鞋買家的主動運動特質距離比純露營活動更遠一層，所以只給中關聯度」）；bucket="direct" 或' +
+    '"unrelated" 時可以簡短一點，但一樣要講真正的判斷依據。\n\n' +
     '按照原本順序回傳一個等長的 JSON 陣列（放在 results 欄位），每個元素是 {"bucket": "...", "tier": 數字, ' +
-    '"closeness": 數字}（bucket 不是 indirect 時 tier 填 0；bucket 不是 direct 時 closeness 填 0）。';
+    '"closeness": 數字, "reason": "..."}（bucket 不是 indirect 時 tier 填 0；bucket 不是 direct 時 ' +
+    'closeness 填 0）。';
   var parsed = callGemini_(prompt, CLASSIFY_RESPONSE_SCHEMA);
   if (!parsed || !Array.isArray(parsed.results) || parsed.results.length !== candidates.length) {
     Logger.log('classifyAndTierResults_ 回傳格式不對或失敗（可能是 Gemini 額度用完），保守退回：只留下跟' +
       '搜尋詞完全同名的當 direct，其餘一律排除，避免把 Meta 補位的不相關雜訊誤標成直接相關顯示給使用者');
     return candidates.map(function (c) {
       return c.name === query
-        ? { bucket: 'direct', tier: 0, closeness: 100, aiFailed: true }
-        : { bucket: 'unrelated', tier: 0, closeness: 0, aiFailed: true };
+        ? { bucket: 'direct', tier: 0, closeness: 100, reason: '', aiFailed: true }
+        : { bucket: 'unrelated', tier: 0, closeness: 0, reason: '', aiFailed: true };
     });
   }
   return parsed.results;
