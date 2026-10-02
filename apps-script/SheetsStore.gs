@@ -18,7 +18,7 @@ var SHEETS = {
 
 var SHEET_HEADERS = {
   Interests: ['id', 'name', 'path', 'audience_size_lower_bound', 'audience_size_upper_bound', 'topic', 'description', 'first_seen_at', 'last_seen_at', 'last_snapshot_id'],
-  Snapshots: ['snapshot_id', 'started_at', 'finished_at', 'keywords_used_count', 'interests_found_count', 'new_interest_ids', 'removed_interest_ids', 'status'],
+  Snapshots: ['snapshot_id', 'started_at', 'finished_at', 'keywords_used_count', 'interests_found_count', 'new_interest_ids', 'removed_interest_ids', 'status', 'failed_terms_count'],
   RelatedCache: ['seed_interest_id', 'related_json', 'computed_at'],
   OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'lift', 'computed_at'],
   SeedKeywords: ['keyword'],

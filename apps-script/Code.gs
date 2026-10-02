@@ -235,12 +235,18 @@ function startOrContinueRefresh_() {
  * 這是「系統性擴散」的核心：資料庫裡的標籤名字本身也拿去再搜一次，找它們的鄰居，
  * 但已經搜過的詞永遠不會被重複搜，保證每一輪都在真正往外擴張，而不是原地打轉。
  */
-function buildUnsearchedCandidates_(extraTerms) {
+function buildUnsearchedCandidates_(extraTerms, failedCounts) {
   var searched = getSearchedTermsSet_();
+  var failed = failedCounts || {};
   var allNames = readSheetAsObjects_(SHEETS.INTERESTS).map(function (r) { return r.name; });
   var candidates = dedupeStrings_((extraTerms || []).concat(allNames));
-  return candidates.filter(function (t) { return !searched[t]; });
+  return candidates.filter(function (t) {
+    return !searched[t] && (failed[t] || 0) < MAX_TERM_ATTEMPTS;
+  });
 }
+
+/** 同一個詞在一次刷新裡最多試幾次，超過就先放棄，等下一次刷新再試。 */
+var MAX_TERM_ATTEMPTS = 3;
 
 function getLatestSnapshotId_() {
   var rows = readSheetAsObjects_(SHEETS.SNAPSHOTS);
@@ -266,27 +272,38 @@ function runRefreshBatch() {
   var batchStartTime = new Date().getTime();
   var endIndex = Math.min(state.cursor + REFRESH_BATCH_SIZE, state.keywords.length);
   var found = [];
-  var processedTerms = [];
+  var succeededTerms = [];
+  var attemptedCount = 0;
+  // 2026-10-03 修正：原本查詢失敗的詞（網路問題、被限流等）只記一筆錯誤日誌，然後照樣
+  // 被記進「已搜尋」清單，之後不會再試——等於失敗被悄悄當成成功漏掉，而且失敗只存在
+  // 每批執行自己的日誌裡，沒有彙整，事後查不出漏了多少。現在只有「成功查到」的詞才記進
+  // 已搜尋清單；失敗的詞留在清單外，下一輪（資料庫標籤名字比對）會自動撿回來重試，
+  // 同一個詞最多試 MAX_TERM_ATTEMPTS 次，避免永遠失敗的詞讓這個流程停不下來。
+  var failedCounts = state.failedCounts || {};
   for (var i = state.cursor; i < endIndex; i++) {
     if (new Date().getTime() - batchStartTime > REFRESH_BATCH_TIME_BUDGET_MS) {
-      Logger.log('這批已經逼近安全時間上限，提前結束（這批實際處理了 ' + processedTerms.length +
+      Logger.log('這批已經逼近安全時間上限，提前結束（這批實際處理了 ' + attemptedCount +
         ' 筆），剩下的留給下一批繼續。');
       break;
     }
     var keyword = state.keywords[i];
     try {
       searchAdInterest_(keyword, 200, false).forEach(function (r) { found.push(r); });
+      succeededTerms.push(keyword);
+      delete failedCounts[keyword];
     } catch (e) {
-      Logger.log('關鍵字「' + keyword + '」查詢失敗：' + e.message);
+      failedCounts[keyword] = (failedCounts[keyword] || 0) + 1;
+      Logger.log('關鍵字「' + keyword + '」查詢失敗（第 ' + failedCounts[keyword] + ' 次）：' + e.message);
     }
-    processedTerms.push(keyword);
+    attemptedCount++;
     Utilities.sleep(200);
   }
+  state.failedCounts = failedCounts;
 
   upsertFoundInterests_(found, state.snapshotId);
-  recordSearchedTerms_(processedTerms);
+  recordSearchedTerms_(succeededTerms);
 
-  state.cursor += processedTerms.length;
+  state.cursor += attemptedCount;
 
   if (state.cursor >= state.keywords.length) {
     // 2026-09-28 修正：原本這裡就直接收尾，換成先檢查資料庫裡是不是又多了「還沒
@@ -294,7 +311,7 @@ function runRefreshBatch() {
     // 有的話代表還沒搜到飽和，接到隊伍後面繼續搜下一輪；完全沒有新的可搜，才是
     // 真的搜到飽和，這時候才真正收尾。這個迴圈本身就是「系統性擴散」的完整實作，
     // 取代原本依賴已失效 adinterestsuggestion API 的方案 B。
-    var moreCandidates = buildUnsearchedCandidates_([]);
+    var moreCandidates = buildUnsearchedCandidates_([], state.failedCounts);
     if (moreCandidates.length) {
       Logger.log('這一輪搜完又找到 ' + moreCandidates.length + ' 個還沒搜過的新標籤，繼續下一輪。');
       state.keywords = state.keywords.concat(moreCandidates);
@@ -365,6 +382,20 @@ function deleteRefreshTriggers_() {
   });
 }
 
+/**
+ * Snapshots 是舊分頁，表頭只有建立當下的欄位；getSheet_ 只在「新建分頁」時才寫表頭，
+ * 新增的 failed_terms_count 欄位不會自動出現，所以寫入前先確認表頭有這一欄，沒有就補在最後面。
+ */
+function ensureSnapshotsFailedColumn_() {
+  var sheet = getSheet_(SHEETS.SNAPSHOTS);
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (headers.indexOf('failed_terms_count') === -1) {
+    sheet.getRange(1, lastCol + 1).setValue('failed_terms_count');
+  }
+}
+
 /** 這次跑完後：diff 出新出現/消失的興趣，寫一列到 Snapshots */
 function finalizeRefresh_(state) {
   var allInterests = readSheetAsObjects_(SHEETS.INTERESTS);
@@ -386,6 +417,12 @@ function finalizeRefresh_(state) {
     }
   });
 
+  var failedTerms = Object.keys(state.failedCounts || {});
+  if (failedTerms.length) {
+    Logger.log('這次刷新結束時仍有 ' + failedTerms.length + ' 個詞反覆查詢失敗、先放棄（會留到下次刷新再試）：' +
+      failedTerms.slice(0, 50).join('、'));
+  }
+  ensureSnapshotsFailedColumn_();
   appendRow_(SHEETS.SNAPSHOTS, {
     snapshot_id: state.snapshotId,
     started_at: state.startedAt,
@@ -395,5 +432,6 @@ function finalizeRefresh_(state) {
     new_interest_ids: JSON.stringify(newIds),
     removed_interest_ids: JSON.stringify(removedIds),
     status: isBaseline ? 'baseline_done' : 'done',
+    failed_terms_count: failedTerms.length,
   });
 }
