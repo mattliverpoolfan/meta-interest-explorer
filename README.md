@@ -8,7 +8,7 @@
 
 ### 1. 建立資料庫 Sheet
 
-開一個新的 Google Sheet，隨便命名（例如「Meta興趣資料庫」）。不用手動建分頁，程式第一次寫入時會自動建好 `Interests` / `Categories` / `Snapshots` / `RelatedCache` / `OverlapCache` 五個分頁。
+開一個新的 Google Sheet，隨便命名（例如「Meta興趣資料庫」）。不用手動建分頁，程式第一次寫入時會自動建好 `Interests` / `Snapshots` / `RelatedCache` / `OverlapCache` / `SearchedTerms` 等分頁。
 
 ⚠️ **這份 Sheet 之後不要分享編輯權限給任何人**——它綁定的 Apps Script 專案裡存著 Meta token 等機密（見下方第 3 步），只要誰有這份 Sheet 的「編輯者」權限，就能打開「擴充功能 > Apps Script > 專案設定」看到明文，這是 Google 的權限模型本身如此，Sheet 內的「保護工作表/範圍」功能救不了這件事。之後要分享這個工具給同事，只分享**前端網頁的網址**（第 5 步），不要分享這份 Sheet 本身。
 

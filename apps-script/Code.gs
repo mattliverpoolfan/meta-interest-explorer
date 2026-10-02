@@ -11,7 +11,6 @@ function doGet(e) {
   try {
     var action = e.parameter.action;
     if (action === 'searchInterests') return jsonOutput_(handleSearchInterests_(e.parameter.q));
-    if (action === 'categoryTree') return jsonOutput_(readSheetAsObjects_(SHEETS.CATEGORIES));
     if (action === 'suggestRelated') return jsonOutput_(handleSuggestRelated_(e.parameter.seed_ids, e.parameter.seed_names));
     if (action === 'refreshStatus') return jsonOutput_(getRefreshStatus_());
     if (action === 'overlapScanStatus') return jsonOutput_(getOverlapScanStatus_(e.parameter.scanId));
@@ -208,9 +207,10 @@ function startOrContinueRefresh_() {
     // 2026-09-28 修正：Meta 自己有一份官方興趣分類清單（type=adTargetingCategory,
     // class=interests），回傳的資料結構跟 Interests 分頁存的標籤完全一樣（同樣是
     // 「興趣」class，同樣有 id、受眾規模），是真的可以直接拿去投放的標籤，不是只能
-    // 拿去釣魚用的搜尋詞——原本這份清單只寫進獨立的 Categories 分頁（給分類瀏覽
-    // 用），從來沒有併進 Interests。這裡先併進去，讓下面組搜尋詞時能一併把分類
+    // 拿去釣魚用的搜尋詞。這裡先併進 Interests，讓下面組搜尋詞時能一併把分類
     // 名稱當種子用。抓分類清單失敗不影響原本用關鍵字掃描的部分，照樣繼續跑。
+    // （2026-10-03 起前端不再有分類瀏覽，原本專門存這份清單的 Categories 分頁
+    // 與 categoryTree 端點已一併移除。）
     try {
       upsertFoundInterests_(searchAdTargetingCategory_(), 'category_tree');
     } catch (e) {
@@ -223,7 +223,6 @@ function startOrContinueRefresh_() {
       startedAt: new Date().toISOString(),
       keywords: buildUnsearchedCandidates_(seedKeywords),
       cursor: 0,
-      categoriesDone: false,
     };
     props.setProperty('REFRESH_STATE', JSON.stringify(state));
   }
@@ -262,11 +261,6 @@ function runRefreshBatch() {
     Logger.log('Meta 應用程式額度使用率偏高，延後 30 分鐘後再繼續這批（狀態、進度都保留）。');
     scheduleNextBatch_(30);
     return;
-  }
-
-  if (!state.categoriesDone) {
-    refreshCategoryTree_();
-    state.categoriesDone = true;
   }
 
   var batchStartTime = new Date().getTime();
@@ -314,26 +308,6 @@ function runRefreshBatch() {
   } else {
     props.setProperty('REFRESH_STATE', JSON.stringify(state));
     scheduleNextBatch_();
-  }
-}
-
-function refreshCategoryTree_() {
-  try {
-    var categories = searchAdTargetingCategory_();
-    var now = new Date().toISOString();
-    upsertRows_(SHEETS.CATEGORIES, 'id', categories.map(function (c) {
-      return {
-        id: c.id,
-        name: c.name,
-        path: JSON.stringify(c.path || []),
-        audience_size_lower_bound: c.audience_size_lower_bound || '',
-        audience_size_upper_bound: c.audience_size_upper_bound || '',
-        last_seen_at: now,
-      };
-    }));
-  } catch (e) {
-    // 分類樹抓失敗不影響興趣搜尋本身，記錄下來但繼續跑批次
-    Logger.log('抓分類樹失敗：' + e.message);
   }
 }
 
