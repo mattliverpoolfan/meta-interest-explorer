@@ -36,8 +36,6 @@ function init() {
   el('manual-compare-btn').addEventListener('click', computeManualOverlap);
   setupManualCompareAutocomplete();
   initTabs();
-
-  loadCategories();
 }
 
 // 探索/檢索跟自行比對是兩個獨立情境，不是同一套流程的前後步驟——用分頁切換，
@@ -101,26 +99,6 @@ async function apiPost(body) {
   });
   if (json.error) throw new Error(json.error);
   return json;
-}
-
-async function loadCategories() {
-  try {
-    const categories = await apiGet('categoryTree', {});
-    const list = el('category-list');
-    list.innerHTML = '';
-    categories.slice(0, 300).forEach((c) => {
-      const li = document.createElement('li');
-      li.textContent = c.name;
-      li.title = safeParsePath(c.path).join(' > ');
-      li.addEventListener('click', () => {
-        el('search-input').value = c.name;
-        runUnifiedSearch();
-      });
-      list.appendChild(li);
-    });
-  } catch (e) {
-    console.error(e);
-  }
 }
 
 function safeParsePath(path) {
