@@ -56,6 +56,14 @@ function computeOverlapForPair_(idA, idB) {
   var sizeA = deliveryEstimate_([{ interests: [{ id: idA }] }]);
   Utilities.sleep(250);
   var sizeB = deliveryEstimate_([{ interests: [{ id: idB }] }]);
+  return finishPairOverlap_(idA, idB, sizeA, sizeB);
+}
+
+/**
+ * 已經知道 A、B 各自的台灣規模時，只需要再打一次交集估算就能算出重疊率跟 lift。
+ * 第三類掃描會先單獨查候選的規模來過濾，過濾通過才走到這一步，省掉重複查詢。
+ */
+function finishPairOverlap_(idA, idB, sizeA, sizeB) {
   Utilities.sleep(250);
   var sizeIntersection = deliveryEstimate_([{ interests: [{ id: idA }] }, { interests: [{ id: idB }] }]);
 
@@ -108,8 +116,24 @@ function estimateOverlapForPairs_(pairs) {
 // Script Property 有 9KB 的單一值上限，candidates/results 用陣列 tuple（不是物件）
 // 存，省掉重複的 key 名稊，40 筆候選也能穩穩存下。
 
-var OVERLAP_SCAN_BATCH_SIZE = 6;
 var OVERLAP_SCAN_STATE_KEY = 'OVERLAP_SCAN_STATE';
+
+// 2026-10-03 改版：原本是「挑 40 個候選全部丟進去比，比完才看結果」，比完才發現一堆數字不可靠
+// （台灣規模貼著 Meta 回報下限、或標籤大到 lift 理論上不可能高），額度已經花掉了。
+// 現在是「備選名單 + 比對前先過濾」：備選名單比目標多很多，比對每個候選之前先只查它的台灣
+// 規模（1 次估算，快取起來全工具共用），不合規則的直接換下一個備選、不用花最貴的交集那一步，
+// 直到湊滿 OVERLAP_ACCEPT_TARGET 個合格的或備選用完。
+var OVERLAP_ACCEPT_TARGET = 40;
+var OVERLAP_INDIRECT_QUOTA = 25; // ②間接相關最多佔這麼多，其餘名額留給隨機發現，避免被推理延伸全部佔滿
+// 台灣規模下限：Meta 對極小受眾會直接貼著最低回報下限（約 1,000）回傳，這種規模算出的
+// 100% 重疊與一模一樣的 lift 只是樣本雜訊，不是發現。
+var MIN_TW_AUDIENCE_SIZE = 30000;
+// 台灣規模上限（佔台灣總覆蓋人口的比例）：lift 的理論最大值 = 母體 ÷ 較大那一邊的規模，
+// 標籤太大，就算兩邊完全重疊 lift 也不可能高（占 60% 人口的標籤，lift 最高只有約 1.7），
+// 比出來只會是「標籤太大所以重疊率很高」的假象，不值得花額度。
+var MAX_TW_AUDIENCE_SHARE = 0.25;
+var OVERLAP_BATCH_MAX_EXAMINE = 30;
+var OVERLAP_BATCH_TIME_BUDGET_MS = 150 * 1000;
 
 function startOverlapScan_(seed, candidates, seedReason) {
   var state = {
@@ -117,9 +141,13 @@ function startOverlapScan_(seed, candidates, seedReason) {
     seedId: seed.id,
     seedName: seed.name,
     seedReason: seedReason || '',
-    candidates: candidates.map(function (c) { return [c.id, c.name]; }),
+    candidates: candidates.map(function (c) { return [c.id, c.name, c.source || 'random']; }),
     cursor: 0,
-    results: [], // [id, name, overlap_ratio, lift]
+    target: Math.min(OVERLAP_ACCEPT_TARGET, candidates.length),
+    seedSize: null,
+    accepted: { indirect: 0, random: 0 },
+    skipped: { small: 0, large: 0, quota: 0 },
+    results: [], // [id, name, overlap_ratio, lift, tw_size, source]
   };
   PropertiesService.getScriptProperties().setProperty(OVERLAP_SCAN_STATE_KEY, JSON.stringify(state));
   scheduleOverlapScanBatch_();
@@ -127,10 +155,21 @@ function startOverlapScan_(seed, candidates, seedReason) {
     scanId: state.scanId,
     seedName: state.seedName,
     seedReason: state.seedReason,
-    total: state.candidates.length,
+    total: state.target,
     done: false,
     results: [],
   };
+}
+
+/** 規模是否值得拿去比對：回傳 'small' / 'large'（不值得）或 null（可以比）。 */
+function screenCandidateSize_(size, totalPopulation) {
+  if (size < MIN_TW_AUDIENCE_SIZE) return 'small';
+  if (totalPopulation > 0 && size > totalPopulation * MAX_TW_AUDIENCE_SHARE) return 'large';
+  return null;
+}
+
+function isScanFinished_(state) {
+  return state.results.length >= state.target || state.cursor >= state.candidates.length;
 }
 
 /** 由時間觸發器呼叫，每次處理一批候選，沒跑完就排下一批 */
@@ -140,24 +179,70 @@ function runOverlapScanBatch() {
   if (!stateStr) return; // 沒有進行中的掃描，可能被新搜尋蓋掉或手動清掉了
   var state = JSON.parse(stateStr);
 
-  var batch = state.candidates.slice(state.cursor, state.cursor + OVERLAP_SCAN_BATCH_SIZE);
-  batch.forEach(function (candidate) {
-    try {
-      var row = computeOverlapForPair_(state.seedId, candidate[0]);
-      state.results.push([candidate[0], candidate[1], row.overlap_ratio, row.lift]);
-    } catch (e) {
-      Logger.log('重疊掃描候選「' + candidate[1] + '」失敗：' + e.message);
+  ensureOverlapCacheLiftColumn_();
+  var totalPopulation = getTotalPopulationEstimate_();
+  var twSizes = getTaiwanSizeMap_();
+  var newSizes = [];
+  var batchStart = new Date().getTime();
+  var examined = 0;
+
+  if (!(state.seedSize > 0)) {
+    state.seedSize = deliveryEstimate_([{ interests: [{ id: state.seedId }] }]);
+    Utilities.sleep(250);
+  }
+
+  while (!isScanFinished_(state) &&
+         examined < OVERLAP_BATCH_MAX_EXAMINE &&
+         new Date().getTime() - batchStart < OVERLAP_BATCH_TIME_BUDGET_MS) {
+    var candidate = state.candidates[state.cursor];
+    state.cursor++;
+    var candId = candidate[0];
+    var candName = candidate[1];
+    var source = candidate[2];
+
+    if (source === 'indirect' && state.accepted.indirect >= OVERLAP_INDIRECT_QUOTA) {
+      state.skipped.quota++;
+      continue;
     }
-  });
+    examined++;
 
-  state.cursor += OVERLAP_SCAN_BATCH_SIZE;
-  var isDone = state.cursor >= state.candidates.length;
+    try {
+      var size;
+      var known = twSizes[String(candId)];
+      if (known) {
+        size = known.size;
+      } else {
+        size = deliveryEstimate_([{ interests: [{ id: candId }] }]);
+        Utilities.sleep(250);
+        // 0 可能是真的查無受眾，也可能是估算失敗（deliveryEstimate_ 失敗時回 0），
+        // 不快取，免得把一次暫時性失敗永久記成「這個標籤沒人」。
+        if (size > 0) {
+          newSizes.push({ id: candId, tw_size: size });
+          twSizes[String(candId)] = { size: size };
+        }
+      }
 
-  if (isDone) {
-    props.setProperty(OVERLAP_SCAN_STATE_KEY, JSON.stringify(state));
+      var reject = size > 0 ? screenCandidateSize_(size, totalPopulation) : 'small';
+      if (reject) {
+        state.skipped[reject]++;
+        continue;
+      }
+
+      var row = getCachedOverlap_(state.seedId, candId) ||
+        finishPairOverlap_(state.seedId, candId, state.seedSize, size);
+      state.results.push([candId, candName, row.overlap_ratio, row.lift, size, source]);
+      state.accepted[source === 'indirect' ? 'indirect' : 'random']++;
+    } catch (e) {
+      Logger.log('重疊掃描候選「' + candName + '」失敗：' + e.message);
+    }
+  }
+
+  saveTaiwanSizes_(newSizes);
+  props.setProperty(OVERLAP_SCAN_STATE_KEY, JSON.stringify(state));
+
+  if (isScanFinished_(state)) {
     deleteOverlapScanTriggers_();
   } else {
-    props.setProperty(OVERLAP_SCAN_STATE_KEY, JSON.stringify(state));
     scheduleOverlapScanBatch_();
   }
 }
@@ -192,18 +277,37 @@ function getOverlapScanStatus_(scanId) {
   if (state.scanId !== scanId) return { running: false, replaced: true };
 
   var results = state.results.map(function (r) {
-    return { id: r[0], name: r[1], overlap_ratio: r[2], lift: r[3] };
+    return {
+      id: r[0],
+      name: r[1],
+      overlap_ratio: r[2],
+      lift: r[3],
+      tw_size: r[4],
+      source: r[5],
+      strength: liftStrength_(r[3]),
+    };
   }).filter(function (r) {
     return r.lift >= MIN_DISPLAY_LIFT;
   }).sort(function (a, b) { return b.lift - a.lift; });
 
-  var done = state.cursor >= state.candidates.length;
+  var skipped = state.skipped || { small: 0, large: 0, quota: 0 };
   return {
-    running: !done,
+    running: !isScanFinished_(state),
     done: state.results.length,
-    total: state.candidates.length,
+    total: state.target,
+    skipped: { small: skipped.small, large: skipped.large },
     seedName: state.seedName,
     seedReason: state.seedReason || '',
     results: results,
   };
+}
+
+/**
+ * 把 lift 轉成白話分級給前端顯示。到這一步規模已經過了台灣規模的上下限過濾，所以 lift 的
+ * 高低是可以信的，不需要再拿重疊率來交叉判斷「是不是標籤太大造成的」。
+ */
+function liftStrength_(lift) {
+  if (lift >= 3) return 'strong';
+  if (lift >= 2) return 'medium';
+  return 'weak';
 }

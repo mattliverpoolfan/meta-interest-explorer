@@ -12,8 +12,9 @@
 var UNIFIED_SEARCH_TERM_DELAY_MS = 100;
 var UNIFIED_SEARCH_RESULT_LIMIT = 20;
 var CLASSIFY_INPUT_LIMIT = 60;
-var OVERLAP_CANDIDATE_POOL_LIMIT = 40;
-var OVERLAP_CANDIDATE_RANDOM_SAMPLE = 30;
+// 備選名單大小（不是最終比對數量）：比對時每個備選都要先過台灣規模的上下限，不合格的
+// 直接換下一個，所以名單要比目標（OVERLAP_ACCEPT_TARGET，見 Overlap.gs）大很多。
+var OVERLAP_RESERVE_SIZE = 120;
 
 /**
  * 2026-09-09 實測抓到：像「投資」這種泛用詞，Meta 搜尋一次就補回 20 幾筆各種投資/
@@ -241,31 +242,85 @@ function buildCandidatePool_(seed, indirectResults) {
   seenIds[String(seed.id)] = true;
   var pool = [];
 
+  // 已經快取過台灣規模、而且已知不合格（太小或太大）的標籤，在這裡就直接剔除，連備選名單都不進，
+  // 不用等到比對時才發現。沒有快取的先放行，比對時會查並快取。
+  var twSizes = {};
+  var totalPopulation = 0;
+  try {
+    twSizes = getTaiwanSizeMap_();
+    totalPopulation = getTotalPopulationEstimate_();
+  } catch (e) {
+    Logger.log('讀取台灣規模快取失敗，備選名單不做預先剔除：' + e.message);
+  }
+  function knownUnfit(id) {
+    var known = twSizes[id];
+    return !!(known && screenCandidateSize_(known.size, totalPopulation));
+  }
+
   indirectResults.forEach(function (item) {
     var id = String(item.id);
     if (seenIds[id]) return;
     if (estimatedAudienceSize_(item) < MIN_CANDIDATE_AUDIENCE_SIZE) return;
+    if (knownUnfit(id)) return;
     seenIds[id] = true;
-    pool.push({ id: item.id, name: item.name });
+    pool.push({ id: item.id, name: item.name, source: 'indirect' });
   });
 
   try {
-    var all = readSheetAsObjects_(SHEETS.INTERESTS);
-    var sampleCount = Math.min(OVERLAP_CANDIDATE_RANDOM_SAMPLE, all.length);
-    if (sampleCount > 0) {
-      var step = Math.max(1, Math.floor(all.length / sampleCount));
-      for (var i = 0; i < all.length && pool.length < OVERLAP_CANDIDATE_POOL_LIMIT; i += step) {
-        var row = all[i];
-        var id = String(row.id);
-        if (!id || seenIds[id]) continue;
-        if (estimatedAudienceSize_(row) < MIN_CANDIDATE_AUDIENCE_SIZE) continue;
-        seenIds[id] = true;
-        pool.push({ id: row.id, name: row.name });
-      }
-    }
+    var eligible = readSheetAsObjects_(SHEETS.INTERESTS).filter(function (row) {
+      var id = String(row.id);
+      return id && row.name && !seenIds[id] &&
+        estimatedAudienceSize_(row) >= MIN_CANDIDATE_AUDIENCE_SIZE && !knownUnfit(id);
+    });
+    pickStratifiedRandom_(eligible, OVERLAP_RESERVE_SIZE - pool.length).forEach(function (row) {
+      pool.push({ id: row.id, name: row.name, source: 'random' });
+    });
   } catch (e) {
     Logger.log('候選池隨機取樣失敗，僅用間接相關的結果：' + e.message);
   }
 
-  return pool.slice(0, OVERLAP_CANDIDATE_POOL_LIMIT);
+  return pool.slice(0, OVERLAP_RESERVE_SIZE);
+}
+
+/**
+ * 2026-10-03 修正：原本的「隨機取樣」是按資料庫順序每隔固定間隔取一筆——資料庫是照發現順序
+ * 排的，相鄰的列常是同一批關鍵字搜出來的同主題標籤，所以取到的會成群（例如整串親子標籤），
+ * 而且資料庫沒變的話，每次搜尋抽到的幾乎是同一批。改成：先依標籤的主題分類（topic 欄）分組，
+ * 每組內真的洗牌，再輪流從各組各取一個，讓備選名單盡量涵蓋不同方向。
+ */
+function pickStratifiedRandom_(rows, n) {
+  if (n <= 0 || !rows.length) return [];
+  var groups = {};
+  rows.forEach(function (row) {
+    var key = String(row.topic || '未分類');
+    (groups[key] = groups[key] || []).push(row);
+  });
+  var keys = shuffle_(Object.keys(groups));
+  keys.forEach(function (k) { groups[k] = shuffle_(groups[k]); });
+
+  var picked = [];
+  var round = 0;
+  while (picked.length < n) {
+    var tookAny = false;
+    for (var i = 0; i < keys.length && picked.length < n; i++) {
+      var g = groups[keys[i]];
+      if (round < g.length) {
+        picked.push(g[round]);
+        tookAny = true;
+      }
+    }
+    if (!tookAny) break;
+    round++;
+  }
+  return picked;
+}
+
+/** Fisher-Yates 洗牌，回傳新陣列。 */
+function shuffle_(list) {
+  var a = list.slice();
+  for (var i = a.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
 }

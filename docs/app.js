@@ -2,7 +2,7 @@
 
 // Web App 網址是固定的，寫死在這裡就好，不需要使用者自己貼；
 // apiKey 則從分享連結的 ?key= 參數自動帶入（見 init() 底部），不做成畫面上的輸入框。
-const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyVYhgVOh3CZeuNPgepXFKZ8VboPHW07Ayl3pDdjv2iBwBhkHYf31xfuf9AodBcnYS2/exec';
+const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxgX4GuJVld_TpVNNB1DfoFh9IMyrqyPuUWWtlM-w0slLJKE3Y3uuk2usNaLP239BGx/exec';
 
 const state = {
   apiKey: localStorage.getItem('apiKey') || '',
@@ -261,12 +261,16 @@ function pollOverlapScan(scanId) {
         return;
       }
       renderSeedInfo_(status.seedName, status.seedReason);
-      el('overlap-scan-progress').textContent = `比對中… ${status.done}/${status.total}`;
+      const skippedTotal = status.skipped ? status.skipped.small + status.skipped.large : 0;
+      const skippedText = skippedTotal
+        ? `（已先略過 ${skippedTotal} 個台灣受眾規模不適合的標籤，不浪費比對額度）`
+        : '';
+      el('overlap-scan-progress').textContent = status.running
+        ? `比對中… 已完成 ${status.done}/${status.total} 個合格標籤${skippedText}`
+        : `比對完成（共比對 ${status.done} 個合格標籤${skippedText}）`;
       renderOverlapScanResults(status.results);
       if (status.running) {
         state.overlapPollTimer = setTimeout(tick, OVERLAP_POLL_INTERVAL_MS);
-      } else {
-        el('overlap-scan-progress').textContent = `比對完成（共 ${status.total} 筆）`;
       }
     } catch (e) {
       consecutiveFailures += 1;
@@ -288,9 +292,30 @@ function renderOverlapScanResults(results) {
     const li = document.createElement('li');
     const ratioText = (r.overlap_ratio * 100).toFixed(0) + '%';
     const liftText = r.lift != null ? `lift ${formatLift_(r.lift)}` : '';
-    li.innerHTML = `<span class="name">${r.name}</span><span class="path">重疊率 ${ratioText}　${liftText}</span>`;
+    const strength = STRENGTH_LABELS[r.strength];
+    const strengthChip = strength ? `<span class="chip chip-${r.strength}">${strength}</span>` : '';
+    const sourceChip = r.source === 'indirect'
+      ? '<span class="chip chip-source">②推理延伸</span>'
+      : '<span class="chip chip-source chip-random">隨機發現</span>';
+    const sizeText = r.tw_size ? `台灣約 ${formatTwSize_(r.tw_size)}　` : '';
+    li.innerHTML =
+      `<span class="name">${r.name}${strengthChip}${sourceChip}</span>` +
+      `<span class="path">${sizeText}重疊率 ${ratioText}　${liftText}</span>`;
     listEl.appendChild(li);
   });
+}
+
+// lift 分級的白話標籤（後端 liftStrength_ 決定屬於哪一級，這裡只負責顯示用語）
+const STRENGTH_LABELS = {
+  strong: '關聯強，值得優先看',
+  medium: '有關聯',
+  weak: '訊號偏弱',
+};
+
+// 台灣受眾規模：大於一萬就用「X 萬人」，比較好讀
+function formatTwSize_(size) {
+  if (size >= 10000) return `${(size / 10000).toFixed(size >= 1000000 ? 0 : 1)} 萬人`;
+  return `${size} 人`;
 }
 
 // lift 理論上沒有上限——兩個規模很小又高度相關的標籤，lift 算出幾十萬倍都是合理的

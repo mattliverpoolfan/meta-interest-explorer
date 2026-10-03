@@ -136,6 +136,22 @@ body {
   font-size: 13px;
 }
 
+.chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: 1px;
+}
+
+.chip-strong { background: #dcfce7; color: var(--tier-high); }
+.chip-medium { background: #fef3c7; color: var(--tier-medium); }
+.chip-weak { background: #f1f1ef; color: var(--muted); }
+.chip-source { background: var(--accent-weak); color: var(--accent); }
+.chip-source.chip-random { background: #f1f1ef; color: var(--muted); }
+
 .reason-toggle {
   flex-basis: 100%;
   align-self: flex-start;

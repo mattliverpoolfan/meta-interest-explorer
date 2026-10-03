@@ -14,6 +14,7 @@ var SHEETS = {
   OVERLAP_CACHE: 'OverlapCache',
   SEED_KEYWORDS: 'SeedKeywords',
   SEARCHED_TERMS: 'SearchedTerms',
+  TAIWAN_SIZES: 'TaiwanSizes',
 };
 
 var SHEET_HEADERS = {
@@ -23,6 +24,7 @@ var SHEET_HEADERS = {
   OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'lift', 'computed_at'],
   SeedKeywords: ['keyword'],
   SearchedTerms: ['term'],
+  TaiwanSizes: ['id', 'tw_size', 'checked_at'],
 };
 
 var DEFAULT_SEED_KEYWORDS = [
@@ -206,6 +208,36 @@ function recordSearchedTerms_(terms) {
   if (!toAppend.length) return;
   var sheet = getSheet_(SHEETS.SEARCHED_TERMS);
   sheet.getRange(sheet.getLastRow() + 1, 1, toAppend.length, 1).setValues(toAppend);
+}
+
+/**
+ * 2026-10-03 新增：每個標籤在「台灣」的實際受眾規模快取（跟搜尋結果附帶的全球規模是兩回事）。
+ * 重疊比對前要先用它篩掉台灣規模太小（Meta 回報下限附近，數字不可靠）或太大（lift 理論上限
+ * 太低、比不出訊號）的候選，每個標籤只需要查一次，之後所有搜尋共用，超過 TW_SIZE_CACHE_DAYS
+ * 天才會重查。回傳 { id: { size, checkedAtMs } }，只含還沒過期的。
+ */
+var TW_SIZE_CACHE_DAYS = 30;
+
+function getTaiwanSizeMap_() {
+  var rows = readSheetAsObjects_(SHEETS.TAIWAN_SIZES);
+  var cutoff = new Date().getTime() - TW_SIZE_CACHE_DAYS * 24 * 3600 * 1000;
+  var map = {};
+  rows.forEach(function (r) {
+    var at = new Date(r.checked_at).getTime();
+    var size = Number(r.tw_size);
+    if (!r.id || !(size > 0) || !(at >= cutoff)) return;
+    map[String(r.id)] = { size: size, checkedAtMs: at };
+  });
+  return map;
+}
+
+/** entries: [{id, tw_size}]，已經有的 id 覆寫、沒有的新增。 */
+function saveTaiwanSizes_(entries) {
+  if (!entries || !entries.length) return;
+  var now = new Date().toISOString();
+  upsertRows_(SHEETS.TAIWAN_SIZES, 'id', entries.map(function (e) {
+    return { id: e.id, tw_size: e.tw_size, checked_at: now };
+  }));
 }
 
 function appendRow_(name, row) {
