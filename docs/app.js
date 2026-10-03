@@ -261,13 +261,9 @@ function pollOverlapScan(scanId) {
         return;
       }
       renderSeedInfo_(status.seedName, status.seedReason);
-      const skippedTotal = status.skipped ? status.skipped.small + status.skipped.large : 0;
-      const skippedText = skippedTotal
-        ? `（已先略過 ${skippedTotal} 個台灣受眾規模不適合的標籤，不浪費比對額度）`
-        : '';
       el('overlap-scan-progress').textContent = status.running
-        ? `比對中… 已完成 ${status.done}/${status.total} 個合格標籤${skippedText}`
-        : `比對完成（共比對 ${status.done} 個合格標籤${skippedText}）`;
+        ? `比對中… 已完成 ${status.done}/${status.total}`
+        : `比對完成，共 ${status.done} 個標籤`;
       renderOverlapScanResults(status.results);
       if (status.running) {
         state.overlapPollTimer = setTimeout(tick, OVERLAP_POLL_INTERVAL_MS);
@@ -286,31 +282,41 @@ function pollOverlapScan(scanId) {
 }
 
 function renderOverlapScanResults(results) {
-  const listEl = el('overlap-scan-results');
-  listEl.innerHTML = '';
-  results.forEach((r) => {
-    const li = document.createElement('li');
-    const ratioText = (r.overlap_ratio * 100).toFixed(0) + '%';
-    const liftText = r.lift != null ? `lift ${formatLift_(r.lift)}` : '';
-    const strength = STRENGTH_LABELS[r.strength];
-    const strengthChip = strength ? `<span class="chip chip-${r.strength}">${strength}</span>` : '';
-    const sourceChip = r.source === 'indirect'
-      ? '<span class="chip chip-source">②推理延伸</span>'
-      : '<span class="chip chip-source chip-random">隨機發現</span>';
-    const sizeText = r.tw_size ? `台灣約 ${formatTwSize_(r.tw_size)}　` : '';
-    li.innerHTML =
-      `<span class="name">${r.name}${strengthChip}${sourceChip}</span>` +
-      `<span class="path">${sizeText}重疊率 ${ratioText}　${liftText}</span>`;
-    listEl.appendChild(li);
+  const groups = [
+    ['overlap-scan-results-indirect', 'overlap-group-indirect', results.filter((r) => r.source === 'indirect')],
+    ['overlap-scan-results-random', 'overlap-group-random', results.filter((r) => r.source !== 'indirect')],
+  ];
+  groups.forEach(([listId, groupId, items]) => {
+    const listEl = el(listId);
+    listEl.innerHTML = '';
+    el(groupId).hidden = items.length === 0;
+    el(groupId).querySelector('.group-count').textContent = items.length ? `（${items.length}）` : '';
+    items.forEach((r) => {
+      const li = document.createElement('li');
+      li.className = 'overlap-row';
+      li.title = `lift 範圍 ${formatLift_(r.lift_low)}～${formatLift_(r.lift_high)}（Meta 的人數是範圍，這是最悲觀到最樂觀的情況）`;
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = r.name;
+      li.appendChild(name);
+      [
+        ['num size', formatTwSize_(r.tw_size)],
+        ['num', `${Math.round(r.cand_side * 100)}%`],
+        ['num', `${Math.round(r.seed_side * 100)}%`],
+      ].forEach(([cls, text]) => {
+        const c = document.createElement('span');
+        c.className = cls;
+        c.textContent = text;
+        li.appendChild(c);
+      });
+      const lift = document.createElement('span');
+      lift.className = `num lift lift-${r.strength}`;
+      lift.textContent = formatLift_(r.lift);
+      li.appendChild(lift);
+      listEl.appendChild(li);
+    });
   });
 }
-
-// lift 分級的白話標籤（後端 liftStrength_ 決定屬於哪一級，這裡只負責顯示用語）
-const STRENGTH_LABELS = {
-  strong: '關聯強，值得優先看',
-  medium: '有關聯',
-  weak: '訊號偏弱',
-};
 
 // 台灣受眾規模：大於一萬就用「X 萬人」，比較好讀
 function formatTwSize_(size) {

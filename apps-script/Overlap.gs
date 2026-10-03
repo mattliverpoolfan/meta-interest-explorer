@@ -144,10 +144,10 @@ function startOverlapScan_(seed, candidates, seedReason) {
     candidates: candidates.map(function (c) { return [c.id, c.name, c.source || 'random']; }),
     cursor: 0,
     target: Math.min(OVERLAP_ACCEPT_TARGET, candidates.length),
-    seedSize: null,
+    seedRange: null,
     accepted: { indirect: 0, random: 0 },
     skipped: { small: 0, large: 0, quota: 0 },
-    results: [], // [id, name, overlap_ratio, lift, tw_size, source]
+    results: [], // [id, name, 標籤端重疊率, lift, tw_size, source, 種子端重疊率, lift下緣, lift上緣]
   };
   PropertiesService.getScriptProperties().setProperty(OVERLAP_SCAN_STATE_KEY, JSON.stringify(state));
   scheduleOverlapScanBatch_();
@@ -168,6 +168,32 @@ function screenCandidateSize_(size, totalPopulation) {
   return null;
 }
 
+/**
+ * 一個候選標籤對種子的比對數字。Meta 給的每個人數都是範圍，所以 lift 同時算三個：
+ * 中間值，以及最悲觀（交集取低、兩邊規模取高）、最樂觀（反過來）的情況。
+ * 交集夾在「較小那邊的規模」以內——Meta 的估算偶爾會讓交集比單邊還大，數學上不可能。
+ *   candSide：這個標籤的人，有幾成也在種子裡（投放時鎖定它，打到的人有多像種子）
+ *   seedSide：種子裡有幾成也在這個標籤裡（用來理解受眾）
+ */
+function scanOverlapMetrics_(seedId, candId, seedRange, candRange, population) {
+  var inter = deliveryEstimateRange_([{ interests: [{ id: seedId }] }, { interests: [{ id: candId }] }]);
+  Utilities.sleep(250);
+  var cap = Math.min(seedRange.mid, candRange.size);
+  function clamp(v) { return Math.min(v, cap); }
+  var iMid = clamp(inter.mid), iLo = clamp(inter.lower), iHi = clamp(inter.upper);
+  function lift(i, sSize, cSize) {
+    return (population > 0 && sSize > 0 && cSize > 0) ? i * population / (sSize * cSize) : 0;
+  }
+  function r2(v) { return Math.round(v * 100) / 100; }
+  return {
+    candSide: candRange.size > 0 ? Math.round(Math.min(1, iMid / candRange.size) * 10000) / 10000 : 0,
+    seedSide: seedRange.mid > 0 ? Math.round(Math.min(1, iMid / seedRange.mid) * 10000) / 10000 : 0,
+    lift: r2(lift(iMid, seedRange.mid, candRange.size)),
+    liftLow: r2(lift(iLo, seedRange.upper, candRange.upper)),
+    liftHigh: r2(lift(iHi, seedRange.lower, candRange.lower)),
+  };
+}
+
 function isScanFinished_(state) {
   return state.results.length >= state.target || state.cursor >= state.candidates.length;
 }
@@ -186,8 +212,8 @@ function runOverlapScanBatch() {
   var batchStart = new Date().getTime();
   var examined = 0;
 
-  if (!(state.seedSize > 0)) {
-    state.seedSize = deliveryEstimate_([{ interests: [{ id: state.seedId }] }]);
+  if (!state.seedRange) {
+    state.seedRange = deliveryEstimateRange_([{ interests: [{ id: state.seedId }] }]);
     Utilities.sleep(250);
   }
 
@@ -212,13 +238,15 @@ function runOverlapScanBatch() {
       if (known) {
         size = known.size;
       } else {
-        size = deliveryEstimate_([{ interests: [{ id: candId }] }]);
+        var range = deliveryEstimateRange_([{ interests: [{ id: candId }] }]);
+        size = range.mid;
         Utilities.sleep(250);
-        // 0 可能是真的查無受眾，也可能是估算失敗（deliveryEstimate_ 失敗時回 0），
+        // 0 可能是真的查無受眾，也可能是估算失敗（deliveryEstimateRange_ 失敗時回 0），
         // 不快取，免得把一次暫時性失敗永久記成「這個標籤沒人」。
         if (size > 0) {
-          newSizes.push({ id: candId, tw_size: size });
-          twSizes[String(candId)] = { size: size };
+          newSizes.push({ id: candId, tw_size: size, tw_lower: range.lower, tw_upper: range.upper });
+          known = { size: size, lower: range.lower, upper: range.upper };
+          twSizes[String(candId)] = known;
         }
       }
 
@@ -228,9 +256,8 @@ function runOverlapScanBatch() {
         continue;
       }
 
-      var row = getCachedOverlap_(state.seedId, candId) ||
-        finishPairOverlap_(state.seedId, candId, state.seedSize, size);
-      state.results.push([candId, candName, row.overlap_ratio, row.lift, size, source]);
+      var m = scanOverlapMetrics_(state.seedId, candId, state.seedRange, known, totalPopulation);
+      state.results.push([candId, candName, m.candSide, m.lift, size, source, m.seedSide, m.liftLow, m.liftHigh]);
       state.accepted[source === 'indirect' ? 'indirect' : 'random']++;
     } catch (e) {
       Logger.log('重疊掃描候選「' + candName + '」失敗：' + e.message);
@@ -263,12 +290,9 @@ function deleteOverlapScanTriggers_() {
  * 小範圍分享情境下的已知取捨）——回傳 replaced:true，前端顯示「已被新的搜尋取代」
  * 而不是卡住轉圈。
  */
-// 2026-09-21 修正：lift = 1 代表「跟純屬巧合一樣，沒有真實訊號」（見上面「lift 指標 vs
-// overlap_ratio」）。過去把候選池算完的每一個結果都顯示出來，導致清單尾端一堆 lift 接近
-// 甚至低於 1 的雜訊——這些不是「關聯比較弱」，是統計上根本測不到關聯，顯示出來只會誤導
-// 使用者以為這也是個值得參考的選項。這裡只過濾「顯示」，不影響 OverlapCache 裡的原始
-// 計算結果（那些數字本身沒有錯，只是不值得展示）。
-var MIN_DISPLAY_LIFT = 1.5;
+// lift = 1 代表跟純屬巧合一樣、沒有真實訊號；1.2 是行銷上常用的「指數 120」門檻，
+// 中間值連這個都沒到的不顯示。只過濾顯示，不影響原始計算。
+var MIN_DISPLAY_LIFT = 1.2;
 
 function getOverlapScanStatus_(scanId) {
   var stateStr = PropertiesService.getScriptProperties().getProperty(OVERLAP_SCAN_STATE_KEY);
@@ -280,11 +304,14 @@ function getOverlapScanStatus_(scanId) {
     return {
       id: r[0],
       name: r[1],
-      overlap_ratio: r[2],
+      cand_side: r[2],
       lift: r[3],
       tw_size: r[4],
       source: r[5],
-      strength: liftStrength_(r[3]),
+      seed_side: r[6],
+      lift_low: r[7],
+      lift_high: r[8],
+      strength: liftStrength_(r[3], r[7]),
     };
   }).filter(function (r) {
     return r.lift >= MIN_DISPLAY_LIFT;
@@ -303,11 +330,15 @@ function getOverlapScanStatus_(scanId) {
 }
 
 /**
- * 把 lift 轉成白話分級給前端顯示。到這一步規模已經過了台灣規模的上下限過濾，所以 lift 的
- * 高低是可以信的，不需要再拿重疊率來交叉判斷「是不是標籤太大造成的」。
+ * 分級看「最悲觀的 lift」（lift_low），因為 Meta 給的人數都是範圍，只靠中間值會把估算誤差
+ * 當成訊號。門檻是慣例而非推導：行銷上常用的指數 120（＝lift 1.2）以上算明顯偏高；
+ * 悲觀情況下仍有 2 倍以上，視為強訊號。
+ *   strong    最悲觀的情況仍 ≥ 2 倍
+ *   medium    最悲觀的情況仍 ≥ 1.2 倍
+ *   uncertain 中間值有 ≥ 1.2 倍，但最悲觀情況不到——可能只是估算誤差
  */
-function liftStrength_(lift) {
-  if (lift >= 3) return 'strong';
-  if (lift >= 2) return 'medium';
-  return 'weak';
+function liftStrength_(lift, liftLow) {
+  if (liftLow >= 2) return 'strong';
+  if (liftLow >= 1.2) return 'medium';
+  return 'uncertain';
 }

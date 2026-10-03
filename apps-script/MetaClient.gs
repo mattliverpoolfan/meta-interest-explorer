@@ -159,6 +159,11 @@ function searchAdTargetingCategory_() {
  *     [{interests:[{id:A},{id:B}]}]               → A 聯集 B
  */
 function deliveryEstimate_(flexibleSpec) {
+  return deliveryEstimateRange_(flexibleSpec).mid;
+}
+
+/** 同 deliveryEstimate_，但回傳 Meta 給的完整範圍 {lower, upper, mid}（失敗時全 0） */
+function deliveryEstimateRange_(flexibleSpec) {
   var config = getMetaConfig_();
   var targetingSpec = {
     geo_locations: { countries: [config.defaultCountry] },
@@ -170,13 +175,14 @@ function deliveryEstimate_(flexibleSpec) {
       targeting_spec: JSON.stringify(targetingSpec),
     });
     var row = (json.data && json.data[0]) || {};
-    // Meta 回傳的是 estimate_mau_lower_bound / estimate_mau_upper_bound 這組範圍，取平均當代表值
+    // Meta 回傳的是 estimate_mau_lower_bound / estimate_mau_upper_bound 這組範圍
     // （estimate_dau 這個欄位雖然存在，但 REACH 這個 optimization_goal 底下它恆常是 0，不能拿來用）
     var lower = Number(row.estimate_mau_lower_bound || 0);
     var upper = Number(row.estimate_mau_upper_bound || lower);
-    return (lower + upper) / 2 || lower || upper || 0;
+    var mid = (lower + upper) / 2 || lower || upper || 0;
+    return { lower: lower || mid, upper: upper || mid, mid: mid };
   } catch (e) {
     Logger.log('delivery_estimate 估算失敗（可能含 Meta 已下架或不可投放的標籤）：' + e.message);
-    return 0;
+    return { lower: 0, upper: 0, mid: 0 };
   }
 }

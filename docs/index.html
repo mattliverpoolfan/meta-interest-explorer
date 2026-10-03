@@ -25,13 +25,13 @@
 
       <section class="panel result-section">
         <h2>① 直接相關</h2>
-        <p class="status">字面同義詞、直覺聯想得到的興趣——AI 幫忙聯想候選詞，但每一個都經過 Meta 實際驗證存在、且經過關聯性複查才會顯示。</p>
+        <p class="status">字面同義詞、直覺聯想得到的興趣，都經過 Meta 驗證存在。</p>
         <ul id="direct-results" class="result-list"></ul>
       </section>
 
       <section class="panel result-section" id="indirect-section">
         <h2>② 邏輯上間接相關</h2>
-        <p class="status">不是同義詞，是推理「這群受眾背後還會在意什麼」得到的候選，一樣經過 Meta 驗證存在——依關聯強度分三級：越強邏輯越清楚、適合優先測試；越弱跳躍越大，適合大膽嘗試新方向。</p>
+        <p class="status">AI 推理「這群受眾背後還會在意什麼」得到的候選，都經過 Meta 驗證存在。分三級：越高邏輯越清楚，越低跳躍越大。</p>
 
         <div class="tier-block">
           <h3 class="tier-label tier-high">高關聯度 <span class="tier-hint">邏輯清楚，適合優先測試</span></h3>
@@ -49,10 +49,28 @@
 
       <section class="panel result-section">
         <h2>③ 受眾重疊比對</h2>
-        <p class="status">看似不相關但受眾實際重疊——這類需要花時間逐一比對 Meta 真實受眾規模，沒辦法即時算完，會持續更新進度。比對只算台灣受眾，而且會先略過台灣規模太小（數字不可靠）或太大（比不出訊號）的標籤，只挑值得比的。排序看 <b>lift</b>（比巧合高幾倍，越高代表關聯越真實）；重疊率是較小那群裡有多少比例也在種子裡，會被標籤大小影響，僅供參考。</p>
+        <p class="status">看似不相關、但受眾實際重疊的標籤。只算台灣受眾，比對需要幾分鐘，會持續更新。</p>
+        <details class="how-to-read">
+          <summary>怎麼看這些數字</summary>
+          <ul>
+            <li><b>標籤中屬種子</b>：鎖定這個標籤時，打到的人有幾成也在種子受眾裡——投放時最直接的參考。</li>
+            <li><b>種子中屬標籤</b>：種子受眾裡有幾成也對這個標籤有興趣——用來理解受眾、發想素材角度。</li>
+            <li><b>比隨機高幾倍（lift）</b>：上面第一個數字，是隨機碰巧重疊的幾倍。<b>1 倍代表跟巧合一樣</b>，沒有關聯。Meta 給的人數是範圍，所以顏色看的是最悲觀情況：<span class="lift-strong">綠</span>＝最悲觀仍 ≥ 2 倍；<span class="lift-medium">橘</span>＝最悲觀仍 ≥ 1.2 倍；<span class="lift-uncertain">灰</span>＝中間值有訊號，但可能只是估算誤差。滑鼠移到數字上可看範圍。</li>
+            <li>會先略過台灣人數太少（數字不可靠）或太多（比不出訊號）的標籤，不浪費比對額度。</li>
+          </ul>
+        </details>
         <div id="overlap-seed-info" class="seed-info"></div>
         <div id="overlap-scan-progress" class="status"></div>
-        <ul id="overlap-scan-results" class="result-list"></ul>
+        <div class="overlap-group" id="overlap-group-indirect" hidden>
+          <h3 class="group-title">從②延伸的標籤 <span class="group-count"></span></h3>
+          <ul class="overlap-head"><li><span class="name"></span><span class="num size">台灣人數</span><span class="num">標籤中屬種子</span><span class="num">種子中屬標籤</span><span class="num lift">比隨機高</span></li></ul>
+          <ul id="overlap-scan-results-indirect" class="result-list"></ul>
+        </div>
+        <div class="overlap-group" id="overlap-group-random" hidden>
+          <h3 class="group-title">隨機探索 <span class="group-count"></span></h3>
+          <ul class="overlap-head"><li><span class="name"></span><span class="num size">台灣人數</span><span class="num">標籤中屬種子</span><span class="num">種子中屬標籤</span><span class="num lift">比隨機高</span></li></ul>
+          <ul id="overlap-scan-results-random" class="result-list"></ul>
+        </div>
       </section>
     </div>
   </div>

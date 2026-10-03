@@ -24,7 +24,7 @@ var SHEET_HEADERS = {
   OverlapCache: ['pair_key', 'interest_a', 'interest_b', 'size_a', 'size_b', 'size_intersection', 'overlap_ratio', 'lift', 'computed_at'],
   SeedKeywords: ['keyword'],
   SearchedTerms: ['term'],
-  TaiwanSizes: ['id', 'tw_size', 'checked_at'],
+  TaiwanSizes: ['id', 'tw_size', 'checked_at', 'tw_lower', 'tw_upper'],
 };
 
 var DEFAULT_SEED_KEYWORDS = [
@@ -218,7 +218,17 @@ function recordSearchedTerms_(terms) {
  */
 var TW_SIZE_CACHE_DAYS = 30;
 
+/** 舊的 TaiwanSizes 分頁沒有範圍欄位，補上表頭（欄位加在最後面，不影響既有資料）。 */
+function ensureTaiwanSizeRangeColumns_() {
+  var sheet = getSheet_(SHEETS.TAIWAN_SIZES);
+  var lastCol = sheet.getLastColumn();
+  var headers = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+  if (headers.indexOf('tw_lower') !== -1) return;
+  sheet.getRange(1, lastCol + 1, 1, 2).setValues([['tw_lower', 'tw_upper']]);
+}
+
 function getTaiwanSizeMap_() {
+  ensureTaiwanSizeRangeColumns_();
   var rows = readSheetAsObjects_(SHEETS.TAIWAN_SIZES);
   var cutoff = new Date().getTime() - TW_SIZE_CACHE_DAYS * 24 * 3600 * 1000;
   var map = {};
@@ -226,17 +236,23 @@ function getTaiwanSizeMap_() {
     var at = new Date(r.checked_at).getTime();
     var size = Number(r.tw_size);
     if (!r.id || !(size > 0) || !(at >= cutoff)) return;
-    map[String(r.id)] = { size: size, checkedAtMs: at };
+    map[String(r.id)] = {
+      size: size,
+      lower: Number(r.tw_lower) || size,
+      upper: Number(r.tw_upper) || size,
+      checkedAtMs: at,
+    };
   });
   return map;
 }
 
-/** entries: [{id, tw_size}]，已經有的 id 覆寫、沒有的新增。 */
+/** entries: [{id, tw_size, tw_lower, tw_upper}]，已經有的 id 覆寫、沒有的新增。 */
 function saveTaiwanSizes_(entries) {
   if (!entries || !entries.length) return;
+  ensureTaiwanSizeRangeColumns_();
   var now = new Date().toISOString();
   upsertRows_(SHEETS.TAIWAN_SIZES, 'id', entries.map(function (e) {
-    return { id: e.id, tw_size: e.tw_size, checked_at: now };
+    return { id: e.id, tw_size: e.tw_size, checked_at: now, tw_lower: e.tw_lower, tw_upper: e.tw_upper };
   }));
 }
 

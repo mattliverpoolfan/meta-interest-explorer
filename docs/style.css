@@ -374,3 +374,55 @@ button:disabled {
 .seed-info:empty {
   display: none;
 }
+
+.how-to-read {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.how-to-read summary { cursor: pointer; color: var(--accent); }
+.how-to-read ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
+
+.overlap-group { margin-top: 14px; }
+
+.group-title {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+
+.group-count { font-weight: 400; color: var(--muted); }
+
+.overlap-head { list-style: none; margin: 0 0 4px; padding: 0; }
+
+.overlap-head li {
+  display: flex;
+  gap: 12px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.overlap-head .name,
+.result-list li.overlap-row .name { flex: 1; min-width: 0; }
+
+.overlap-head .num,
+.result-list li.overlap-row .num {
+  flex: 0 0 84px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-list li.overlap-row {
+  flex-wrap: nowrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.result-list li.overlap-row .num.size { color: var(--muted); }
+.result-list li.overlap-row .lift { font-weight: 700; }
+
+.lift-strong { color: var(--tier-high); }
+.lift-medium { color: var(--tier-medium); }
+.lift-uncertain { color: var(--muted); }
